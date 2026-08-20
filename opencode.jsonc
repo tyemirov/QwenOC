@@ -1,7 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
-  // This profile is intentionally limited to the local LM Studio provider.
   "enabled_providers": ["lmstudio"],
   "model": "lmstudio/qwen3.8-27b",
   "small_model": "lmstudio/qwen3.8-27b",
