@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.part
+*.gguf
+*.safetensors
+.lmstudio/
+.opencode/node_modules/
+.opencode/skills/
