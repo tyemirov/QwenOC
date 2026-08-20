@@ -16,6 +16,12 @@ if [[ "${1:-}" == "--doctor" ]]; then
   exec "$PROFILE_DIR/doctor.command" "$@"
 fi
 
+if [[ "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
+  printf 'QwenOC requires at least %s GiB of physical memory; detected %s GiB.\n' \
+    "$MIN_SUPPORTED_MEMORY_GIB" "${DETECTED_MEMORY_GIB:-unknown}" >&2
+  exit 2
+fi
+
 if [[ -n "${1:-}" && "${1:-}" != "--" ]]; then
   PROJECT_DIR="$1"
   shift
@@ -75,14 +81,16 @@ fi
 trap release_session_lock EXIT
 
 if ! model_is_installed; then
-  printf 'The required GGUF Q8_0 MTP model is not fully installed: %s\n' "$MODEL_VARIANT_KEY" >&2
-  printf 'Finish its download in LM Studio, then launch again.\n' >&2
+  printf 'The %s profile requires an exact GGUF %s MTP model: %s\n' \
+    "$PROFILE_TIER" "$MODEL_QUANTIZATION" "$MODEL_VARIANT_KEY" >&2
+  printf 'Run %s/install.command to download it, then launch again.\n' "$PROFILE_DIR" >&2
   exit 4
 fi
 
 if ! model_is_selected; then
-  printf 'LM Studio has not selected the required GGUF Q8_0 MTP source.\n' >&2
-  printf 'In LM Studio, open My Models, choose Qwen3.8 27B > Variants, and select Q8_0 MTP GGUF.\n' >&2
+  printf 'LM Studio has not selected the mapped GGUF %s MTP source.\n' "$MODEL_QUANTIZATION" >&2
+  printf 'In LM Studio, open My Models, choose Qwen3.8 27B > Variants, and select %s MTP GGUF.\n' \
+    "$MODEL_QUANTIZATION" >&2
   exit 4
 fi
 
@@ -111,13 +119,15 @@ if [[ -n "$CURRENT_CONTEXT" ]] && \
     printf 'The dedicated Qwen instance is active with the wrong load configuration; close its active request and launch again.\n' >&2
     exit 6
   fi
-  printf 'Reloading Qwen to enforce GGUF Q8_0, MTP, and a %s-token context...\n' "$CONTEXT_LENGTH"
+  printf 'Reloading Qwen to enforce GGUF %s, MTP, and a %s-token context...\n' \
+    "$MODEL_QUANTIZATION" "$CONTEXT_LENGTH"
   "$LMS_BIN" unload "$MODEL_ID" >/dev/null
   CURRENT_CONTEXT=""
 fi
 
 if [[ -z "$CURRENT_CONTEXT" ]]; then
-  printf 'Loading Qwen 3.8 27B GGUF Q8_0 with MTP and a %s-token context...\n' "$CONTEXT_LENGTH"
+  printf 'Loading Qwen 3.8 27B GGUF %s with MTP and a %s-token context...\n' \
+    "$MODEL_QUANTIZATION" "$CONTEXT_LENGTH"
   "$LMS_BIN" load "$MODEL_BASE_KEY" \
     --identifier "$MODEL_ID" \
     --context-length "$CONTEXT_LENGTH" \
@@ -137,17 +147,15 @@ for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 2
   sleep 1
 done
 if [[ "$MODEL_READY" -ne 1 ]]; then
-  printf 'Qwen 3.8 27B GGUF Q8_0 did not become available with MTP and the required context.\n' >&2
+  printf 'Qwen 3.8 27B GGUF %s did not become available with MTP and the required context.\n' \
+    "$MODEL_QUANTIZATION" >&2
   exit 6
 fi
 
-export OPENCODE_CONFIG="$PROFILE_DIR/opencode.jsonc"
-export OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode"
-export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
-export OPENCODE_ENABLE_EXA=true
-export OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true
+configure_opencode_environment
 
-printf 'Opening OpenCode in %s\n' "$PROJECT_DIR"
+printf 'Opening OpenCode in %s with the %s %s profile (%s GiB detected).\n' \
+  "$PROJECT_DIR" "$PROFILE_TIER" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$PROJECT_DIR"
 "$OPENCODE_BIN" "$PROJECT_DIR" \
   --model "lmstudio/qwen3.8-27b" \
