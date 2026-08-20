@@ -7,7 +7,7 @@ source "$PROFILE_DIR/scripts/profile.sh"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf 'Usage: %s\n' "$0"
-  printf 'Installs prerequisites with Homebrew, downloads the exact Q8_0 model, loads MTP, and runs diagnostics.\n'
+  printf 'Detects memory, installs prerequisites, downloads the mapped Qwen quantization, loads MTP, and runs diagnostics.\n'
   exit 0
 fi
 
@@ -16,12 +16,14 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 2
 fi
 
-MEMORY_GIB="$(physical_memory_gib)"
-if [[ ! "$MEMORY_GIB" =~ ^[0-9]+$ ]] || (( MEMORY_GIB < MIN_MEMORY_GIB )); then
-  printf 'This exact %s-token Q8_0 profile requires at least %s GiB of physical memory; detected %s GiB.\n' \
-    "$CONTEXT_LENGTH" "$MIN_MEMORY_GIB" "${MEMORY_GIB:-unknown}" >&2
+MEMORY_GIB="$DETECTED_MEMORY_GIB"
+if [[ "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
+  printf 'QwenOC requires at least %s GiB of physical memory; detected %s GiB.\n' \
+    "$MIN_SUPPORTED_MEMORY_GIB" "${MEMORY_GIB:-unknown}" >&2
   exit 2
 fi
+printf 'Selected %s profile for %s GiB: %s, %s-token context.\n' \
+  "$PROFILE_TIER" "$MEMORY_GIB" "$MODEL_QUANTIZATION" "$CONTEXT_LENGTH"
 
 BREW_BIN="$(command -v brew || true)"
 if [[ -z "$BREW_BIN" ]]; then
@@ -79,19 +81,21 @@ fi
 if ! model_is_installed; then
   FREE_GIB="$(df -Pk "$HOME" | awk 'NR == 2 {printf "%.0f\n", $4 / 1048576}')"
   if [[ ! "$FREE_GIB" =~ ^[0-9]+$ ]] || (( FREE_GIB < MODEL_DOWNLOAD_MIN_FREE_GIB )); then
-    printf 'The Q8_0 model download requires at least %s GiB free; detected %s GiB.\n' \
-      "$MODEL_DOWNLOAD_MIN_FREE_GIB" "${FREE_GIB:-unknown}" >&2
+    printf 'The %s model download requires at least %s GiB free; detected %s GiB.\n' \
+      "$MODEL_QUANTIZATION" "$MODEL_DOWNLOAD_MIN_FREE_GIB" "${FREE_GIB:-unknown}" >&2
     exit 4
   fi
-  printf 'Downloading Qwen 3.8 27B GGUF Q8_0 with its bundled MTP head (about 30 GB)...\n'
+  printf 'Downloading Qwen 3.8 27B GGUF %s with its bundled MTP head (model file about %s GiB)...\n' \
+    "$MODEL_QUANTIZATION" "$MODEL_SIZE_GIB"
   "$LMS_BIN" get "$MODEL_VARIANT_KEY" --gguf --yes
 else
   printf 'Exact model is already installed: %s\n' "$MODEL_VARIANT_KEY"
 fi
 
 if ! model_is_selected; then
-  printf 'LM Studio must select the downloaded Q8_0 source before setup can continue.\n' >&2
-  printf 'Open LM Studio > My Models > Qwen3.8 27B > Variants and select Q8_0 MTP GGUF, then rerun this installer.\n' >&2
+  printf 'LM Studio must select the downloaded %s source before setup can continue.\n' "$MODEL_QUANTIZATION" >&2
+  printf 'Open LM Studio > My Models > Qwen3.8 27B > Variants and select %s MTP GGUF, then rerun this installer.\n' \
+    "$MODEL_QUANTIZATION" >&2
   open -a 'LM Studio'
   exit 4
 fi
@@ -122,7 +126,8 @@ if [[ -n "$CURRENT_CONTEXT" ]] && \
 fi
 
 if [[ -z "$CURRENT_CONTEXT" ]]; then
-  printf 'Loading Qwen 3.8 27B Q8_0 with MTP and a %s-token context...\n' "$CONTEXT_LENGTH"
+  printf 'Loading Qwen 3.8 27B %s with MTP and a %s-token context...\n' \
+    "$MODEL_QUANTIZATION" "$CONTEXT_LENGTH"
   "$LMS_BIN" load "$MODEL_BASE_KEY" \
     --identifier "$MODEL_ID" \
     --context-length "$CONTEXT_LENGTH" \
