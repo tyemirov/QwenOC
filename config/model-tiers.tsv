@@ -1,0 +1,4 @@
+# min_memory_gib	tier	quantization	bits	variant_key	model_id	context_length	output_limit	compaction_reserved	download_min_free_gib	model_size_gib
+64	quality	Q8_0	8	qwen/qwen3.8-27b@q8_0	qwen3.8-27b-gguf-q8-mtp	131072	32000	32000	35	27.05
+48	balanced	Q6_K	6	qwen/qwen3.8-27b@q6_k	qwen3.8-27b-gguf-q6-mtp	65536	16384	16384	28	20.89
+32	compact	Q4_K_M	4	qwen/qwen3.8-27b@q4_k_m	qwen3.8-27b-gguf-q4-mtp	32768	8192	8192	22	15.66
