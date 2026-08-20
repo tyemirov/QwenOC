@@ -10,7 +10,9 @@ export const QwenLocalTuning: Plugin = async () => ({
     output.topP = 0.95
     output.topK = 20
     output.options.top_k = 20
-    output.maxOutputTokens = Math.min(output.maxOutputTokens ?? 32000, 32000)
+    const configuredLimit = Number.parseInt(process.env.QWENOC_OUTPUT_LIMIT ?? "32000", 10)
+    const outputLimit = Number.isFinite(configuredLimit) ? configuredLimit : 32000
+    output.maxOutputTokens = Math.min(output.maxOutputTokens ?? outputLimit, outputLimit)
   },
 
   "experimental.session.compacting": async (_input, output) => {
