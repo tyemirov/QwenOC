@@ -1,22 +1,83 @@
 #!/bin/bash
 
 # Canonical runtime contract shared by setup, diagnostics, and launch.
+PROFILE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODEL_TIER_MAP="$PROFILE_ROOT/config/model-tiers.tsv"
 MODEL_BASE_KEY="qwen/qwen3.8-27b"
-MODEL_VARIANT_KEY="qwen/qwen3.8-27b@q8_0"
-MODEL_ID="qwen3.8-27b-gguf-q8-mtp"
 MODEL_FORMAT="gguf"
-MODEL_QUANTIZATION="Q8_0"
-MODEL_BITS="8"
-CONTEXT_LENGTH="131072"
-MIN_MEMORY_GIB="64"
-MODEL_DOWNLOAD_MIN_FREE_GIB="35"
+MIN_SUPPORTED_MEMORY_GIB="32"
 MIN_OPENCODE_VERSION="1.18.17"
 TESTED_OPENCODE_VERSION="1.18.17"
 TESTED_LM_STUDIO_VERSION="0.4.21+2"
 TESTED_LLAMA_RUNTIME_VERSION="2.28.2"
 LMSTUDIO_URL="http://127.0.0.1:1234"
+
+physical_memory_gib() {
+  sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f\n", $1 / 1073741824}'
+}
+
+validate_model_tier_map() {
+  awk -F '\t' -v minimum_memory="$MIN_SUPPORTED_MEMORY_GIB" '
+    /^#/ || NF == 0 { next }
+    NF != 11 { exit 1 }
+    $1 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ { exit 1 }
+    $7 !~ /^[0-9]+$/ || $8 !~ /^[0-9]+$/ || $9 !~ /^[0-9]+$/ || $10 !~ /^[0-9]+$/ { exit 1 }
+    $11 !~ /^[0-9]+([.][0-9]+)?$/ { exit 1 }
+    $2 == "" || $3 == "" || $5 == "" || $6 == "" { exit 1 }
+    $7 <= $8 || $7 <= $9 { exit 1 }
+    count > 0 && $1 >= previous_memory { exit 1 }
+    {
+      previous_memory = $1
+      count++
+    }
+    END { if (count == 0 || previous_memory != minimum_memory) exit 1 }
+  ' "$MODEL_TIER_MAP"
+}
+
+select_model_profile_for_memory() {
+  local memory_gib="$1"
+  local profile_row
+
+  if [[ ! "$memory_gib" =~ ^[0-9]+$ ]] || ! validate_model_tier_map; then
+    return 1
+  fi
+
+  profile_row="$(awk -F '\t' -v memory="$memory_gib" '
+    /^#/ || NF == 0 { next }
+    memory >= $1 { print; exit }
+  ' "$MODEL_TIER_MAP")"
+  [[ -n "$profile_row" ]] || return 1
+
+  IFS=$'\t' read -r \
+    MIN_MEMORY_GIB \
+    PROFILE_TIER \
+    MODEL_QUANTIZATION \
+    MODEL_BITS \
+    MODEL_VARIANT_KEY \
+    MODEL_ID \
+    CONTEXT_LENGTH \
+    OUTPUT_LIMIT \
+    COMPACTION_RESERVED \
+    MODEL_DOWNLOAD_MIN_FREE_GIB \
+    MODEL_SIZE_GIB <<<"$profile_row"
+
+  MODEL_DISPLAY_NAME="Qwen 3.8 27B GGUF ${MODEL_QUANTIZATION} + MTP"
+  return 0
+}
+
+DETECTED_MEMORY_GIB="$(physical_memory_gib)"
+HARDWARE_PROFILE_SUPPORTED=1
+if ! select_model_profile_for_memory "$DETECTED_MEMORY_GIB"; then
+  HARDWARE_PROFILE_SUPPORTED=0
+  # Keep all contract variables defined so diagnostics can report the minimum tier.
+  select_model_profile_for_memory "$MIN_SUPPORTED_MEMORY_GIB" || {
+    printf 'Invalid or unreadable model tier map: %s\n' "$MODEL_TIER_MAP" >&2
+    return 1 2>/dev/null || exit 1
+  }
+fi
+
 SESSION_LOCK_DIR="${TMPDIR:-/tmp}"
-SESSION_LOCK_DIR="${SESSION_LOCK_DIR%/}/opencode-${MODEL_ID}.lock"
+SESSION_LOCK_DIR="${SESSION_LOCK_DIR%/}/opencode-qwen3.8-27b.lock"
 
 resolve_lms_bin() {
   local candidate
@@ -34,10 +95,6 @@ resolve_opencode_bin() {
   if [[ -n "$candidate" && -x "$candidate" ]]; then
     printf '%s\n' "$candidate"
   fi
-}
-
-physical_memory_gib() {
-  sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f\n", $1 / 1073741824}'
 }
 
 version_at_least() {
@@ -59,6 +116,40 @@ version_at_least() {
       exit 0
     }
   '
+}
+
+runtime_opencode_config_content() {
+  jq -c \
+    --arg model_id "$MODEL_ID" \
+    --arg model_name "$MODEL_DISPLAY_NAME" \
+    --argjson context "$CONTEXT_LENGTH" \
+    --argjson output "$OUTPUT_LIMIT" \
+    --argjson reserved "$COMPACTION_RESERVED" \
+    '
+      .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
+      .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
+      .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
+      .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
+      .compaction.reserved = $reserved |
+      {
+        model,
+        small_model,
+        provider: {lmstudio: .provider.lmstudio},
+        compaction
+      }
+    ' "$PROFILE_ROOT/opencode.jsonc"
+}
+
+configure_opencode_environment() {
+  export OPENCODE_CONFIG="$PROFILE_ROOT/opencode.jsonc"
+  export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode"
+  export OPENCODE_CONFIG_CONTENT
+  OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content)"
+  export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
+  export OPENCODE_ENABLE_EXA=true
+  export OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true
+  export QWENOC_OUTPUT_LIMIT="$OUTPUT_LIMIT"
+  export QWENOC_PROFILE_TIER="$PROFILE_TIER"
 }
 
 model_is_installed() {
