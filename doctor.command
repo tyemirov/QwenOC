@@ -39,11 +39,17 @@ else
   fail "This profile requires an Apple Silicon Mac"
 fi
 
-MEMORY_GIB="$(physical_memory_gib)"
-if [[ "$MEMORY_GIB" =~ ^[0-9]+$ ]] && (( MEMORY_GIB >= MIN_MEMORY_GIB )); then
-  pass "${MEMORY_GIB} GiB physical memory (minimum ${MIN_MEMORY_GIB} GiB)"
+if validate_model_tier_map; then
+  pass "Adaptive model tier map is valid"
 else
-  fail "${MEMORY_GIB:-unknown} GiB physical memory; ${MIN_MEMORY_GIB} GiB is required for this profile"
+  fail "Adaptive model tier map is invalid: $MODEL_TIER_MAP"
+fi
+
+MEMORY_GIB="$DETECTED_MEMORY_GIB"
+if [[ "$HARDWARE_PROFILE_SUPPORTED" -eq 1 ]]; then
+  pass "${MEMORY_GIB} GiB selects the ${PROFILE_TIER} profile: ${MODEL_QUANTIZATION}, ${CONTEXT_LENGTH}-token context"
+else
+  fail "${MEMORY_GIB:-unknown} GiB physical memory; ${MIN_SUPPORTED_MEMORY_GIB} GiB is required"
 fi
 
 for required_command in curl jq git; do
@@ -100,17 +106,17 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$LMS_BIN" ]]; then
   fi
 
   if model_is_selected; then
-    pass "LM Studio selected GGUF Q8_0 as the active source"
+    pass "LM Studio selected GGUF $MODEL_QUANTIZATION as the active source"
   else
-    fail "Select Q8_0 MTP GGUF under LM Studio > My Models > Qwen3.8 27B > Variants"
+    fail "Select $MODEL_QUANTIZATION MTP GGUF under LM Studio > My Models > Qwen3.8 27B > Variants"
   fi
 
   if server_is_ready; then
     pass "LM Studio API is reachable at $LMSTUDIO_URL"
     if [[ "$(loaded_context)" == "$CONTEXT_LENGTH" ]] && loaded_is_required_variant; then
-      pass "Live model uses Q8_0, ${CONTEXT_LENGTH}-token context, Flash Attention, and MTP"
+      pass "Live model uses ${MODEL_QUANTIZATION}, ${CONTEXT_LENGTH}-token context, Flash Attention, and MTP"
     else
-      fail "The live model does not match the required Q8_0 + MTP load configuration"
+      fail "The live model does not match the required ${MODEL_QUANTIZATION} + MTP load configuration"
     fi
   else
     fail "LM Studio API is not running at $LMSTUDIO_URL"
@@ -118,10 +124,12 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$LMS_BIN" ]]; then
 fi
 
 if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]]; then
+  RUNTIME_CONFIG_CONTENT="$(runtime_opencode_config_content 2>/dev/null || true)"
   RESOLVED_CONFIG="$(
     cd "$PROJECT_DIR" &&
       OPENCODE_CONFIG="$PROFILE_DIR/opencode.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode" \
+      OPENCODE_CONFIG_CONTENT="$RUNTIME_CONFIG_CONTENT" \
       OPENCODE_EXPERIMENTAL_LSP_TOOL=true \
       OPENCODE_ENABLE_EXA=true \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
@@ -130,16 +138,19 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
   if jq -e \
     --arg model_id "$MODEL_ID" \
     --argjson context "$CONTEXT_LENGTH" \
+    --argjson output "$OUTPUT_LIMIT" \
+    --argjson reserved "$COMPACTION_RESERVED" \
     '.model == "lmstudio/qwen3.8-27b" and
      .default_agent == "qwen-local" and
      .provider.lmstudio.models["qwen3.8-27b"].id == $model_id and
      .provider.lmstudio.models["qwen3.8-27b"].limit.context == $context and
+     .provider.lmstudio.models["qwen3.8-27b"].limit.output == $output and
      .provider.lmstudio.options.timeout == 1800000 and
      (.provider.lmstudio.options | has("chunkTimeout") | not) and
      .agent["qwen-local"].variant == "medium" and
      .compaction.auto == true and
      .compaction.prune == true and
-     .compaction.reserved == 32000 and
+     .compaction.reserved == $reserved and
      .mcp.context7.enabled == true and
      .mcp.gh_grep.enabled == true' \
     <<<"$RESOLVED_CONFIG" >/dev/null 2>&1; then
@@ -152,6 +163,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
     cd "$PROJECT_DIR" &&
       OPENCODE_CONFIG="$PROFILE_DIR/opencode.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode" \
+      OPENCODE_CONFIG_CONTENT="$RUNTIME_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
       "$OPENCODE_BIN" mcp list 2>/dev/null
   )"
@@ -173,4 +185,5 @@ if (( FAILURES > 0 )); then
   exit 1
 fi
 
-printf '\nReady: OpenCode is connected to Qwen 3.8 27B GGUF Q8_0 with bundled MTP.\n'
+printf '\nReady: OpenCode is connected to Qwen 3.8 27B GGUF %s with bundled MTP.\n' \
+  "$MODEL_QUANTIZATION"
