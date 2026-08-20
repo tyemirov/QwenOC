@@ -1,24 +1,38 @@
 # QwenOC
 
-QwenOC is a portable local-coding profile for OpenCode, LM Studio, and the Qwen 3.8 27B GGUF Q8_0 model with its bundled Multi-Token Prediction (MTP) head enabled.
+QwenOC is a portable local-coding profile for OpenCode, LM Studio, and Qwen 3.8 27B with its bundled Multi-Token Prediction (MTP) head enabled. It detects Apple unified memory at startup and maps the machine to an exact GGUF quantization and context budget.
 
 The profile keeps inference on the Mac, provides a Qwen-specific system prompt and generation tuning, enables automatic context compaction, and connects the Context7 and `gh_grep` MCP servers for current documentation and public-code examples.
 
 ## Why this setup
 
-QwenOC is designed for people who want a capable coding agent running locally, not merely the smallest model or the highest isolated token benchmark. It spends memory on a modern 27B model and an 8-bit quantization, then recovers generation speed with MTP speculative decoding and an optimized Apple Silicon runtime.
+QwenOC is designed for people who want a capable coding agent running locally, not merely the smallest model or the highest isolated token benchmark. It spends the memory available on the highest configured precision, then recovers generation speed with MTP speculative decoding and an optimized Apple Silicon runtime.
 
 | Layer | QwenOC choice | What it contributes |
 | --- | --- | --- |
 | Model | Qwen 3.8 27B | A dense model trained for coding, autonomous planning, tool feedback, vision, and long-horizon agent work |
-| Precision | GGUF Q8_0 | A quality-oriented quantization with substantially more weight precision than a 4-bit build |
+| Precision | Q8_0, Q6_K, or Q4_K_M selected from RAM | Uses the highest configured tier that fits the machine instead of silently accepting LM Studio's current variant |
 | Decoding | Bundled MTP head | Drafts multiple tokens for verification by the same target model, accelerating accepted sequences without substituting a weaker model |
-| Runtime | Full GPU offload, Flash Attention, 131K context | Uses Apple unified memory effectively while retaining room for large repositories and tool output |
+| Runtime | Full GPU offload, Flash Attention, tiered context | Uses Apple unified memory while scaling context and output reserves with model size |
 | Agent harness | Qwen-specific prompt, thinking control, compaction, permissions, and verification commands | Turns the base chat model into a persistent coding workflow instead of relying on generic defaults |
 | Tools | Context7 and `gh_grep` only | Adds current documentation and public-code search without loading a large, context-heavy MCP catalog |
 | Scheduling | One OpenCode session and one prediction slot | Gives the active coding task the machine's full memory bandwidth and prevents queued requests from timing out |
 
-### Quality: why Qwen 3.8 27B and Q8_0
+### Adaptive memory profiles
+
+The canonical map lives in [`config/model-tiers.tsv`](config/model-tiers.tsv). `install.command`, `launch-opencode.command`, and `doctor.command` read the same file every time they start.
+
+| Detected unified memory | Profile | Exact quantization | Context | Output and compaction reserve | Minimum free space before download |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 64 GiB or more | quality | Q8_0 | 131,072 | 32,000 | 35 GiB |
+| 48–63 GiB | balanced | Q6_K | 65,536 | 16,384 | 28 GiB |
+| 32–47 GiB | compact | Q4_K_M | 32,768 | 8,192 | 22 GiB |
+
+The launcher verifies the exact downloaded and selected variant before loading it. A machine with multiple installed variants may require one LM Studio source selection; subsequent launches verify that choice and stop with the precise correction if it changes. Machines below 32 GiB are reported as unsupported by the current map.
+
+The quality/Q8_0 tier is measured on the 64 GiB test Mac. The balanced and compact tiers have configuration-level validation, but their throughput and maximum sustained memory use still need measurements on 48 GiB and 32 GiB hardware.
+
+### Quality: why Qwen 3.8 27B and adaptive precision
 
 The [upstream Qwen3.8-27B model card](https://huggingface.co/Qwen/Qwen3.8-27B) reports material improvements over the same-size Qwen3.6-27B predecessor on coding-agent benchmarks:
 
@@ -31,7 +45,7 @@ The [upstream Qwen3.8-27B model card](https://huggingface.co/Qwen/Qwen3.8-27B) r
 
 Those are Qwen's upstream evaluations under the harnesses described in its model card; they are evidence for selecting the base model, not locally reproduced QwenOC scores.
 
-QwenOC then selects Q8_0 and verifies that LM Studio did not silently load a 4-bit variant. Eight bits per quantized weight place less compression pressure on the model than four bits, making this a deliberate quality-first choice. The cost is approximately 30 GB of model storage and a 64 GiB Mac. A task-level Q8-versus-Q4 quality evaluation has not yet been published for this profile, so QwenOC does not claim a numerical quality uplift from quantization alone.
+On a 64 GiB Mac, QwenOC selects Q8_0 and verifies that LM Studio did not silently load a lower-precision variant. The 48 GiB tier uses Q6_K, and the 32 GiB tier uses Q4_K_M so the same 27B base model remains practical with smaller memory budgets. Greater bit depth generally reduces quantization error, but a task-level Q8-versus-Q6-versus-Q4 evaluation has not yet been published for this profile, so QwenOC does not claim a numerical quality uplift from quantization alone.
 
 ### Speed: what MTP changes
 
@@ -62,14 +76,14 @@ The model is only one part of an agent. [OpenCode supports custom agents](https:
 
 | Alternative | QwenOC advantage | Alternative advantage |
 | --- | --- | --- |
-| Qwen 27B at 4-bit | More weight precision and a configuration that refuses silent Q4 fallback | Lower memory use; may decode faster and fit smaller Macs |
+| A fixed Qwen 27B quantization | Uses Q8 on 64 GiB, Q6 on 48 GiB, and Q4 on 32 GiB while verifying the exact choice | A single fixed artifact is simpler to distribute |
 | The same Q8 model without MTP | Speculative drafts can reduce sequential target-model work when acceptance is high | Simpler baseline with no speculative overhead; an A/B benchmark is still needed |
 | A smaller 7B–14B local model | More model capacity for repository reasoning and long-horizon agent work | Faster generation, lower memory pressure, and easier parallel use |
 | A generic OpenCode local-model configuration | Qwen-specific reasoning controls, prompt, compaction, MCP selection, diagnostics, and runtime safeguards | Less opinionated and easier to adapt to unrelated models |
 | Multiple local sessions | Stable single-task speed, full context capacity, and no head-of-line queue | Higher aggregate concurrency on machines with more memory bandwidth |
 | A frontier cloud coding model | Local source privacy, no inference subscription or per-token charge, no provider rate limit, and operation without inference-network latency | Cloud models may offer higher absolute capability, faster hardware, and managed availability |
 
-The result is a specific sweet spot: higher-fidelity local inference than a memory-first 4-bit setup, materially more capability than a small local model, and responsive generation for sustained coding work—while remaining transparent about the hardware cost and the areas that still need controlled A/B evaluation.
+The result is a practical range: quality-oriented Q8 local inference where memory permits, the same 27B model at progressively smaller quantizations on 48 GiB and 32 GiB Macs, and responsive generation for sustained coding work—while remaining transparent about which tier has measured evidence.
 
 ## Tested configuration
 
@@ -84,11 +98,13 @@ The result is a specific sweet spot: higher-fidelity local inference than a memo
 
 This repository contains configuration and scripts. The installer downloads the model directly through LM Studio.
 
+The 48 GiB Q6_K and 32 GiB Q4_K_M tiers are defined and configuration-tested, but have not yet been benchmarked on those physical machines.
+
 ## Requirements
 
 - An Apple Silicon Mac
-- At least 64 GiB physical memory for this exact Q8_0 and 131,072-token profile
-- At least 35 GiB free before the model download
+- At least 32 GiB physical memory; 48 GiB and 64 GiB automatically select higher tiers
+- Between 22 GiB and 35 GiB free before download, depending on the selected tier
 - [Homebrew](https://brew.sh/)
 - Internet access during installation and for the two configured MCP servers
 
@@ -104,15 +120,15 @@ cd QwenOC
 
 The installer is idempotent. It:
 
-1. Verifies Apple Silicon and physical memory.
+1. Verifies Apple Silicon and maps physical memory to the highest supported tier.
 2. Installs LM Studio, OpenCode, and `jq` through Homebrew when needed.
 3. Confirms that LM Studio supports `--speculative-draft-mtp`.
-4. Downloads the exact `qwen/qwen3.8-27b@q8_0` GGUF model when needed.
+4. Downloads the exact mapped GGUF variant when needed: Q8_0, Q6_K, or Q4_K_M.
 5. Starts the LM Studio API server.
-6. Loads the model with MTP and the canonical 131,072-token context.
+6. Loads the model with MTP and the tier's canonical context.
 7. Runs the full doctor check.
 
-If another Qwen 3.8 variant is already selected, the installer opens LM Studio and identifies the one manual selection required: My Models > Qwen3.8 27B > Variants > Q8_0 MTP GGUF.
+If another Qwen 3.8 variant is already selected, the installer opens LM Studio and identifies the mapped source to select under My Models > Qwen3.8 27B > Variants.
 
 ## Launch
 
@@ -122,7 +138,7 @@ Double-click `launch-opencode.command` and choose a project folder, or pass a pr
 ./launch-opencode.command ~/Development/my-project
 ```
 
-The launcher starts the LM Studio API server when needed, verifies the exact installed and selected model, and reloads an idle dedicated instance when its context or MTP configuration differs. It enforces one OpenCode session for the one-slot model, then starts OpenCode with this repository's configuration and plugin directory.
+The launcher redetects memory, starts the LM Studio API server when needed, verifies the exact installed and selected model, and reloads an idle dedicated instance when its context or MTP configuration differs. It generates the tier-specific OpenCode model limits at runtime, enforces one OpenCode session for the one-slot model, then starts OpenCode with this repository's configuration and plugin directory.
 
 LM Studio remains running when OpenCode exits. Stop it explicitly when desired:
 
@@ -148,8 +164,9 @@ The doctor checks:
 
 - Host architecture and memory
 - Required command-line tools and minimum OpenCode version
-- Exact GGUF Q8_0 installation and LM Studio source selection
-- Live 131,072-token context, Flash Attention, and `speculative_draft_mtp: true`
+- RAM-to-tier selection and validity of the shared data map
+- Exact mapped GGUF installation and LM Studio source selection
+- Live tier-specific context, Flash Attention, and `speculative_draft_mtp: true`
 - Resolved OpenCode model, agent, compaction, and MCP settings
 - Live Context7 and `gh_grep` connections
 
@@ -165,14 +182,14 @@ The launcher also exposes the same check:
 - Press `Ctrl+T` in OpenCode to cycle the `low`, `medium`, and `xhigh` reasoning variants. `medium` is the default.
 - Run `/finish` to continue an implementation until its acceptance criteria and verification are complete.
 - Run `/verify` for a final repository diff and test audit.
-- Automatic compaction is enabled with pruning and a 32,000-token reserve.
+- Automatic compaction is enabled with pruning and a tier-specific 32,000, 16,384, or 8,192-token reserve.
 - The provider uses one 30-minute request deadline. It does not impose a shorter between-chunk SSE deadline while LM Studio is processing a long prompt.
 
 The local plugin applies the model's generation defaults and adds task state, verification evidence, unresolved failures, and the next action to OpenCode's compaction context.
 
 ## Detailed performance record
 
-Eight completed MTP generations produced 6,977 tokens:
+On the tested 64 GiB Q8_0 tier, eight completed MTP generations produced 6,977 tokens:
 
 - Token-weighted generation speed: 13.41 tokens/second
 - Median run: 15.80 tokens/second
@@ -184,7 +201,7 @@ Prompt processing is separate from generation. The tested system processed long 
 
 ## Runtime hygiene
 
-This 64 GiB profile deliberately runs one OpenCode session against one LM Studio prediction slot. The launcher uses a single-session lock and reports the PID of an existing session instead of creating a competing queue.
+Every hardware tier deliberately runs one OpenCode session against one LM Studio prediction slot. The launcher uses a single-session lock and reports the PID of an existing session instead of creating a competing queue.
 
 If OpenCode reports `SSE read timed out`, close the existing profile session and relaunch through `launch-opencode.command`. The doctor reports more than one competing profile session as a failure.
 
@@ -203,6 +220,7 @@ install.command                 One-time idempotent setup
 launch-opencode.command         Runtime launcher
 doctor.command                  Non-destructive configuration audit
 scripts/profile.sh              Canonical model and runtime contract
+config/model-tiers.tsv          RAM, quantization, context, output, and disk-space map
 opencode.jsonc                  OpenCode provider, model, agent, MCP, and compaction settings
 prompts/qwen-local.txt          Qwen-specific coding-agent system prompt
 .opencode/plugins/qwen-local.ts Generation and compaction hooks
