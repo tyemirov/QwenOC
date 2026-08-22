@@ -126,25 +126,81 @@ The installer is idempotent. It:
 4. Downloads the exact mapped GGUF variant when needed: Q8_0, Q6_K, or Q4_K_M.
 5. Starts the LM Studio API server.
 6. Loads the model with MTP and the tier's canonical context.
-7. Runs the full doctor check.
+7. Runs the full live-runtime doctor check.
 
 If another Qwen 3.8 variant is already selected, the installer opens LM Studio and identifies the mapped source to select under My Models > Qwen3.8 27B > Variants.
 
 ## Launch
 
-Double-click `launch-opencode.command` and choose a project folder, or pass a project directly:
+Launch the agent tailored to your current workflow:
+
+### 💻 Qwen The Coder
+Double-click `launch-coder.command` (or `launch-opencode.command`) and choose a project folder, or pass a project directly:
 
 ```bash
-./launch-opencode.command ~/Development/my-project
+./launch-coder.command ~/Development/my-project
 ```
 
-The launcher redetects memory, starts the LM Studio API server when needed, verifies the exact installed and selected model, and reloads an idle dedicated instance when its context or MTP configuration differs. It generates the tier-specific OpenCode model limits at runtime, enforces one OpenCode session for the one-slot model, then starts OpenCode with this repository's configuration and plugin directory.
+- Tuned for software engineering, repository navigation, LSP, and automated testing.
+- Includes Context7 and `gh_grep` documentation and public-code search tools.
+- `launch-opencode.command` delegates to this launcher, including the same model and
+  server cleanup after OpenCode exits.
 
-LM Studio remains running when OpenCode exits. Stop it explicitly when desired:
+### 🗄️ Qwen The Bureaucrat
+Double-click `launch-bureaucrat.command` and choose your office workspace directory:
 
 ```bash
-lms server stop
+./launch-bureaucrat.command ~/Documents/OfficeWorkspace
 ```
+
+- Tuned for executive assistance, Gmail correspondence, Google Drive document organization, and Google Sheets tabular modeling.
+- Gated safety permissions: draft creation is automatic, but sending emails or deleting records always requires explicit human confirmation.
+- Authorizes only the Google Drive, Docs, and Sheets scopes exposed by this profile;
+  it does not request Google Slides or Calendar access.
+- Browser tools reuse the existing Chrome Stable session, including its open tabs
+  and authenticated state.
+
+#### Existing Chrome Session Setup
+
+Chrome can be launched normally; do not add command-line flags. Before launching
+Bureaucrat for the first time:
+
+1. Use Chrome 144 or newer.
+2. In the running Chrome instance, open `chrome://inspect/#remote-debugging` and
+   enable **Remote Debugging**.
+3. Launch Bureaucrat. When Chrome asks whether to allow the debugging connection,
+   click **Allow**.
+
+The launcher verifies the Chrome version, running process, and remote-debugging
+marker before loading the model. Reusing the personal browser session gives the
+agent access to its open tabs, cookies, local storage, and signed-in accounts;
+enable this only for a trusted agent.
+
+#### Google Workspace Prerequisites & Setup:
+
+Because Google classifies Gmail, Google Drive, and Google Sheets as restricted scopes, Google requires a standard **Desktop OAuth 2.0 Client ID** to authorize local MCP servers. Note: The `gcloud` CLI is **not** required; setup is performed via the web console.
+
+1. **Google Cloud Console Setup (One-time)**:
+   - Create or select a project in the [Google Cloud Console](https://console.cloud.google.com/).
+   - Under **APIs & Services > Library**, enable:
+     - **Gmail API**
+     - **Google Drive API**
+     - **Google Sheets API**
+     - **Google Docs API**
+   - Under **APIs & Services > Google Auth Platform** (or OAuth consent screen), enter an app name (e.g. `Bureaucrat`), your email address, and select **External** (or Internal for Workspace organizations).
+
+2. **Download OAuth Client Key**:
+   - Navigate to **APIs & Services > Credentials** > **+ CREATE CREDENTIALS** > **OAuth client ID**.
+   - Set Application Type to **Desktop app**.
+   - Name the client (e.g. `Bureaucrat`) and click **Create**.
+   - Click **Download JSON** (or save to `~/.gmail-mcp/gcp-oauth.keys.json`).
+
+3. **Launch & Authorize**:
+   - Run `./launch-bureaucrat.command`.
+   - On first launch, the script automatically synchronizes the keys to `~/.config/google-drive-mcp/` and opens your default browser to Google's consent screen.
+   - Click **Allow**. Your tokens are saved locally in `~/.gmail-mcp/` and `~/.config/google-drive-mcp/`, enabling persistent, private access for all future sessions.
+
+When an OpenCode session ends, the launcher automatically unloads the heavy Qwen model from unified memory (and stops the background LM Studio server if it was started by the launcher), immediately releasing all system resources.
 
 ## Verify the installation
 
@@ -160,6 +216,18 @@ Run diagnostics against the configuration as resolved inside a specific project:
 ./doctor.command ~/Development/my-project
 ```
 
+The default doctor is non-destructive. If LM Studio is stopped, it verifies the
+installation and configuration and reports the skipped live-model check as
+information. To require an already running API and the exact loaded MTP model:
+
+```bash
+./doctor.command --require-live ~/Development/my-project
+```
+
+The doctor never starts, loads, unloads, or stops LM Studio. The installer uses
+`--require-live` after its own start/load sequence; runtime launchers retain
+ownership of starting and cleaning up their sessions.
+
 The doctor checks:
 
 - Host architecture and memory
@@ -167,6 +235,7 @@ The doctor checks:
 - RAM-to-tier selection and validity of the shared data map
 - Exact mapped GGUF installation and LM Studio source selection
 - Live tier-specific context, Flash Attention, and `speculative_draft_mtp: true`
+  when the runtime is available or `--require-live` is selected
 - Resolved OpenCode model, agent, compaction, and MCP settings
 - Live Context7 and `gh_grep` connections
 
@@ -217,14 +286,19 @@ The model API listens on `127.0.0.1:1234`. OpenCode session sharing is disabled.
 
 ```text
 install.command                 One-time idempotent setup
-launch-opencode.command         Runtime launcher
+launch-coder.command            Launcher for Qwen The Coder (primary coding agent)
+launch-bureaucrat.command       Launcher for Qwen The Bureaucrat (Gmail, Drive, Sheets)
+launch-opencode.command         Alias for launch-coder.command (including cleanup)
 doctor.command                  Non-destructive configuration audit
 scripts/profile.sh              Canonical model and runtime contract
 config/model-tiers.tsv          RAM, quantization, context, output, and disk-space map
-opencode.jsonc                  OpenCode provider, model, agent, MCP, and compaction settings
+config/coder.jsonc              Dedicated OpenCode configuration for The Coder
+config/bureaucrat.jsonc         Dedicated OpenCode configuration for The Bureaucrat
+opencode.jsonc                  Base OpenCode settings
 prompts/qwen-local.txt          Qwen-specific coding-agent system prompt
-.opencode/plugins/qwen-local.ts Generation and compaction hooks
-.opencode/commands/             /finish and /verify commands
+prompts/qwen-bureaucrat.txt     Qwen-specific office and administrative system prompt
+.opencode-coder/                Coder-isolated plugins, commands, and skills
+.opencode-bureaucrat/           Bureaucrat-isolated plugins, commands, and skills
 ```
 
 ## Licensing and attribution
