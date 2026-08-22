@@ -6,13 +6,51 @@ set -o pipefail
 PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$PROFILE_DIR/scripts/profile.sh"
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf 'Usage: %s [project-directory]\n' "$0"
-  printf 'Checks the host, exact model, live MTP configuration, OpenCode profile, and MCP connections.\n'
-  exit 0
-fi
+usage() {
+  printf 'Usage: %s [--require-live] [project-directory]\n' "$0"
+  printf 'Checks the host, installed model, OpenCode profiles, and MCP connections without changing runtime state.\n'
+  printf 'Use --require-live to require the exact LM Studio model to be loaded and reachable.\n'
+}
 
-PROJECT_DIR="${1:-$PROFILE_DIR}"
+REQUIRE_LIVE=0
+PROJECT_DIR=""
+while (( $# > 0 )); do
+  case "$1" in
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --require-live)
+      REQUIRE_LIVE=1
+      ;;
+    --)
+      shift
+      if (( $# > 1 )) || { (( $# == 1 )) && [[ -n "$PROJECT_DIR" ]]; }; then
+        printf 'Only one project directory may be specified.\n' >&2
+        usage >&2
+        exit 2
+      fi
+      PROJECT_DIR="${1:-$PROJECT_DIR}"
+      break
+      ;;
+    -*)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$PROJECT_DIR" ]]; then
+        printf 'Only one project directory may be specified.\n' >&2
+        usage >&2
+        exit 2
+      fi
+      PROJECT_DIR="$1"
+      ;;
+  esac
+  shift
+done
+
+PROJECT_DIR="${PROJECT_DIR:-$PROFILE_DIR}"
 case "$PROJECT_DIR" in
   "~") PROJECT_DIR="$HOME" ;;
   "~/"*) PROJECT_DIR="$HOME/${PROJECT_DIR#\~/}" ;;
@@ -31,6 +69,22 @@ fail() {
 
 info() {
   printf 'INFO  %s\n' "$1"
+}
+
+mcp_server_is_connected() {
+  local server_name="$1"
+  local status_output="$2"
+
+  awk -v server_name="$server_name" '
+    {
+      for (field = 1; field < NF; field++) {
+        if ($field == server_name && $(field + 1) == "connected") {
+          found = 1
+        }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<<"$status_output"
 }
 
 if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
@@ -59,6 +113,32 @@ for required_command in curl jq git; do
     fail "$required_command is required"
   fi
 done
+
+if command -v npx >/dev/null 2>&1; then
+  pass "Node.js / npx is available (required for MCP servers)"
+else
+  fail "Node.js / npx is required for Google Workspace MCP (brew install node)"
+fi
+
+CHROME_VERSION="$(chrome_version)"
+if chrome_supports_auto_connect; then
+  pass "Chrome $CHROME_VERSION supports existing-session auto-connect"
+else
+  fail "Chrome $CHROME_MIN_AUTO_CONNECT_VERSION or newer is required for existing-session auto-connect"
+fi
+if chrome_auto_connect_is_ready; then
+  pass "Running Chrome has Remote Debugging enabled for auto-connect"
+else
+  fail "Launch Chrome normally and enable Remote Debugging at chrome://inspect/#remote-debugging"
+fi
+
+if [[ -f "$PROFILE_DIR/prompts/qwen-local.txt" && -f "$PROFILE_DIR/prompts/qwen-bureaucrat.txt" ]]; then
+  pass "Role prompts verified (qwen-local.txt & qwen-bureaucrat.txt)"
+else
+  fail "Missing prompt files under $PROFILE_DIR/prompts/"
+fi
+
+
 
 LMS_BIN="$(resolve_lms_bin)"
 if [[ -n "$LMS_BIN" ]]; then
@@ -113,23 +193,31 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$LMS_BIN" ]]; then
 
   if server_is_ready; then
     pass "LM Studio API is reachable at $LMSTUDIO_URL"
-    if [[ "$(loaded_context)" == "$CONTEXT_LENGTH" ]] && loaded_is_required_variant; then
+    LIVE_CONTEXT="$(loaded_context)"
+    if [[ "$LIVE_CONTEXT" == "$CONTEXT_LENGTH" ]] && loaded_is_required_variant; then
       pass "Live model uses ${MODEL_QUANTIZATION}, ${CONTEXT_LENGTH}-token context, Flash Attention, and MTP"
+    elif [[ -z "$LIVE_CONTEXT" && "$REQUIRE_LIVE" -eq 0 ]]; then
+      info "The dedicated model is not loaded; launchers load exact ${MODEL_QUANTIZATION} + MTP on start"
+    elif [[ -z "$LIVE_CONTEXT" ]]; then
+      fail "The dedicated ${MODEL_QUANTIZATION} + MTP model is not loaded"
     else
       fail "The live model does not match the required ${MODEL_QUANTIZATION} + MTP load configuration"
     fi
-  else
+  elif [[ "$REQUIRE_LIVE" -eq 1 ]]; then
     fail "LM Studio API is not running at $LMSTUDIO_URL"
+  else
+    info "LM Studio API is not running; live model checks skipped (use --require-live to require them)"
   fi
 fi
 
 if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]]; then
-  RUNTIME_CONFIG_CONTENT="$(runtime_opencode_config_content 2>/dev/null || true)"
-  RESOLVED_CONFIG="$(
+  # 1. Verify Coder Profile Contract
+  CODER_CONFIG_CONTENT="$(runtime_opencode_config_content coder 2>/dev/null || true)"
+  RESOLVED_CODER_CONFIG="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/opencode.jsonc" \
-      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode" \
-      OPENCODE_CONFIG_CONTENT="$RUNTIME_CONFIG_CONTENT" \
+      OPENCODE_CONFIG="$PROFILE_DIR/config/coder.jsonc" \
+      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
+      OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
       OPENCODE_EXPERIMENTAL_LSP_TOOL=true \
       OPENCODE_ENABLE_EXA=true \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
@@ -152,29 +240,92 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
      .compaction.prune == true and
      .compaction.reserved == $reserved and
      .mcp.context7.enabled == true and
-     .mcp.gh_grep.enabled == true' \
-    <<<"$RESOLVED_CONFIG" >/dev/null 2>&1; then
-    pass "Resolved OpenCode profile preserves the model, agent, compaction, and MCP contract"
+     .mcp.gh_grep.enabled == true and
+     (.mcp | has("google_workspace") | not)' \
+    <<<"$RESOLVED_CODER_CONFIG" >/dev/null 2>&1; then
+    pass "Resolved Coder profile preserves dedicated coding MCPs (context7, gh_grep)"
   else
-    fail "The target project's resolved OpenCode configuration overrides the required profile"
+    fail "Coder profile resolution failed"
   fi
 
-  MCP_OUTPUT="$(
+  # 2. Verify Bureaucrat Profile Contract
+  BUREAUCRAT_CONFIG_CONTENT="$(runtime_opencode_config_content bureaucrat 2>/dev/null || true)"
+  RESOLVED_BUREAUCRAT_CONFIG="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/opencode.jsonc" \
-      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode" \
-      OPENCODE_CONFIG_CONTENT="$RUNTIME_CONFIG_CONTENT" \
+      OPENCODE_CONFIG="$PROFILE_DIR/config/bureaucrat.jsonc" \
+      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
+      OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
+      OPENCODE_ENABLE_EXA=true \
+      OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
+      "$OPENCODE_BIN" debug config 2>/dev/null
+  )"
+  if jq -e \
+    --arg model_id "$MODEL_ID" \
+    --argjson context "$CONTEXT_LENGTH" \
+    --argjson output "$OUTPUT_LIMIT" \
+    --argjson reserved "$COMPACTION_RESERVED" \
+    '.model == "lmstudio/qwen3.8-27b" and
+     .default_agent == "qwen-bureaucrat" and
+     .provider.lmstudio.models["qwen3.8-27b"].id == $model_id and
+     .provider.lmstudio.models["qwen3.8-27b"].limit.context == $context and
+     .provider.lmstudio.models["qwen3.8-27b"].limit.output == $output and
+     .agent["qwen-bureaucrat"].variant == "low" and
+     .compaction.auto == true and
+     .compaction.prune == true and
+     .compaction.reserved == $reserved and
+     .mcp.gmail.enabled == true and
+     .mcp.google_drive.enabled == true and
+     .mcp.google_drive.environment.GOOGLE_DRIVE_MCP_SCOPES == "drive,documents,spreadsheets" and
+     .mcp.chrome.enabled == true and
+     (.mcp.chrome.command | index("--browserUrl")) == null and
+     (.mcp.chrome.command | index("--autoConnect")) != null and
+     .agent["qwen-bureaucrat"].tools.gmail_send_draft == true and
+     .agent["qwen-bureaucrat"].tools.gmail_delete_draft == true and
+     .agent["qwen-bureaucrat"].tools.google_drive_authGetStatus == true and
+     .agent["qwen-bureaucrat"].tools.google_drive_manage_accounts == true and
+     .agent["qwen-bureaucrat"].permission.gmail_download_attachment == "deny" and
+     .agent["qwen-bureaucrat"].permission["gmail_send_*"] == "ask" and
+     .agent["qwen-bureaucrat"].permission["gmail_delete_*"] == "ask" and
+     .agent["qwen-bureaucrat"].permission["google_drive_delete_*"] == "ask"' \
+    <<<"$RESOLVED_BUREAUCRAT_CONFIG" >/dev/null 2>&1; then
+    pass "Resolved Bureaucrat profile preserves dedicated office MCPs (gmail, google_drive, chrome)"
+  else
+    fail "Bureaucrat profile resolution failed"
+  fi
+
+  # 3. Verify Live MCP Connections for Coder
+  CODER_MCP_OUTPUT="$(
+    cd "$PROJECT_DIR" &&
+      OPENCODE_CONFIG="$PROFILE_DIR/config/coder.jsonc" \
+      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
+      OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
       "$OPENCODE_BIN" mcp list 2>/dev/null
   )"
-  MCP_OUTPUT_PLAIN="$(printf '%s\n' "$MCP_OUTPUT" | sed $'s/\033\\[[0-9;]*m//g')"
-  CONNECTED_COUNT="$(printf '%s\n' "$MCP_OUTPUT_PLAIN" | grep -c 'connected' || true)"
-  if grep -Fq 'context7' <<<"$MCP_OUTPUT_PLAIN" && \
-    grep -Fq 'gh_grep' <<<"$MCP_OUTPUT_PLAIN" && \
-    (( CONNECTED_COUNT >= 2 )); then
-    pass "Context7 and gh_grep MCP servers are connected"
+  CODER_MCP_PLAIN="$(printf '%s\n' "$CODER_MCP_OUTPUT" | sed $'s/\033\\[[0-9;]*m//g')"
+  if mcp_server_is_connected context7 "$CODER_MCP_PLAIN" && \
+    mcp_server_is_connected gh_grep "$CODER_MCP_PLAIN"; then
+    pass "Coder MCP servers are connected (context7, gh_grep)"
   else
-    fail "Context7 and gh_grep must both be connected"
+    fail "Coder MCP servers (context7, gh_grep) failed to connect"
+  fi
+
+  # 4. Verify Live MCP Connections for Bureaucrat
+  BUREAUCRAT_MCP_OUTPUT="$(
+    cd "$PROJECT_DIR" &&
+      OPENCODE_CONFIG="$PROFILE_DIR/config/bureaucrat.jsonc" \
+      OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
+      OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
+      OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
+      "$OPENCODE_BIN" mcp list 2>/dev/null
+  )"
+  BUREAUCRAT_MCP_PLAIN="$(printf '%s\n' "$BUREAUCRAT_MCP_OUTPUT" | sed $'s/\033\\[[0-9;]*m//g')"
+  if mcp_server_is_connected gmail "$BUREAUCRAT_MCP_PLAIN" && \
+    mcp_server_is_connected google_drive "$BUREAUCRAT_MCP_PLAIN" && \
+    mcp_server_is_connected chrome "$BUREAUCRAT_MCP_PLAIN"; then
+    pass "Bureaucrat MCP transports initialized (gmail, google_drive, chrome)"
+  else
+    fail "Bureaucrat MCP transports (gmail, google_drive, chrome) failed to initialize"
   fi
 fi
 
@@ -185,5 +336,9 @@ if (( FAILURES > 0 )); then
   exit 1
 fi
 
-printf '\nReady: OpenCode is connected to Qwen 3.8 27B GGUF %s with bundled MTP.\n' \
-  "$MODEL_QUANTIZATION"
+if [[ "$REQUIRE_LIVE" -eq 1 ]]; then
+  printf '\nReady: OpenCode is connected to Qwen 3.8 27B GGUF %s with bundled MTP.\n' \
+    "$MODEL_QUANTIZATION"
+else
+  printf '\nReady: QwenOC installation and configuration checks passed.\n'
+fi
