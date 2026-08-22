@@ -61,6 +61,11 @@ if ! command -v jq >/dev/null 2>&1; then
   "$BREW_BIN" install jq
 fi
 
+if ! command -v npx >/dev/null 2>&1; then
+  printf 'Installing Node.js (for MCP servers)...\n'
+  "$BREW_BIN" install node
+fi
+
 OPENCODE_BIN="$(resolve_opencode_bin)"
 if [[ -z "$OPENCODE_BIN" ]]; then
   printf 'Installing OpenCode...\n'
@@ -137,6 +142,8 @@ if [[ -z "$CURRENT_CONTEXT" ]]; then
     --yes
 fi
 
-"$PROFILE_DIR/doctor.command" "$PROFILE_DIR"
+"$PROFILE_DIR/doctor.command" --require-live "$PROFILE_DIR"
 
-printf '\nInstallation complete. Launch with:\n  %s/launch-opencode.command [project-directory]\n' "$PROFILE_DIR"
+printf '\nInstallation complete. Launch either agent:\n'
+printf '  Coder:      %s/launch-coder.command [project-directory]\n' "$PROFILE_DIR"
+printf '  Bureaucrat: %s/launch-bureaucrat.command [workspace-directory]\n' "$PROFILE_DIR"
