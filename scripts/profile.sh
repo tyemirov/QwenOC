@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Canonical runtime contract shared by setup, diagnostics, and launch.
-PROFILE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]:-${(%):-%x}}"
+PROFILE_ROOT="$(cd "$(dirname "${SCRIPT_PATH:-$0}")/.." && pwd)"
 MODEL_TIER_MAP="$PROFILE_ROOT/config/model-tiers.tsv"
 MODEL_BASE_KEY="qwen/qwen3.8-27b"
 MODEL_FORMAT="gguf"
@@ -11,6 +12,11 @@ TESTED_OPENCODE_VERSION="1.18.17"
 TESTED_LM_STUDIO_VERSION="0.4.21+2"
 TESTED_LLAMA_RUNTIME_VERSION="2.28.2"
 LMSTUDIO_URL="http://127.0.0.1:1234"
+GOOGLE_DRIVE_MCP_SCOPES_REQUIRED="drive,documents,spreadsheets"
+CHROME_APPLICATION_ID="com.google.Chrome"
+CHROME_USER_DATA_DIR="$HOME/Library/Application Support/Google/Chrome"
+CHROME_DEVTOOLS_ACTIVE_PORT="$CHROME_USER_DATA_DIR/DevToolsActivePort"
+CHROME_MIN_AUTO_CONNECT_VERSION="144"
 
 physical_memory_gib() {
   sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f\n", $1 / 1073741824}'
@@ -118,38 +124,173 @@ version_at_least() {
   '
 }
 
+chrome_version() {
+  local chrome_bin
+  chrome_bin="$(resolve_chrome_bin)"
+  if [[ -n "$chrome_bin" ]]; then
+    "$chrome_bin" --version 2>/dev/null | awk '{print $NF}'
+  fi
+}
+
+resolve_chrome_bin() {
+  local application_path
+  local chrome_bin
+  local lookup_script
+
+  lookup_script="POSIX path of (path to application id \"$CHROME_APPLICATION_ID\")"
+  application_path="$(osascript -e "$lookup_script" 2>/dev/null || true)"
+  [[ -n "$application_path" ]] || return 1
+  chrome_bin="${application_path%/}/Contents/MacOS/Google Chrome"
+  [[ -x "$chrome_bin" ]] || return 1
+  printf '%s\n' "$chrome_bin"
+}
+
+chrome_supports_auto_connect() {
+  local version
+  version="$(chrome_version)"
+  [[ -n "$version" ]] && version_at_least "$version" "$CHROME_MIN_AUTO_CONNECT_VERSION"
+}
+
+chrome_auto_connect_is_ready() {
+  local port=""
+  local endpoint=""
+
+  pgrep -x 'Google Chrome' >/dev/null 2>&1 || return 1
+  [[ -r "$CHROME_DEVTOOLS_ACTIVE_PORT" ]] || return 1
+  port="$(sed -n '1p' "$CHROME_DEVTOOLS_ACTIVE_PORT")"
+  endpoint="$(sed -n '2p' "$CHROME_DEVTOOLS_ACTIVE_PORT")"
+  [[ "$port" =~ ^[0-9]+$ ]] && [[ "$endpoint" == /devtools/browser/* ]]
+}
+
+newest_desktop_oauth_key() {
+  local downloads_dir="${1:-$HOME/Downloads}"
+  local candidate
+  local newest=""
+
+  while IFS= read -r -d '' candidate; do
+    if ! jq -e '(.installed? | type) == "object"' "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+
+    if [[ -z "$newest" ]] || [[ "$candidate" -nt "$newest" ]] || \
+      [[ ! "$newest" -nt "$candidate" && "$candidate" > "$newest" ]]; then
+      newest="$candidate"
+    fi
+  done < <(find "$downloads_dir" -maxdepth 1 -type f -name 'client_secret_*.json' -print0 2>/dev/null)
+
+  if [[ -n "$newest" ]]; then
+    printf '%s\n' "$newest"
+  fi
+}
+
 runtime_opencode_config_content() {
-  jq -c \
-    --arg model_id "$MODEL_ID" \
-    --arg model_name "$MODEL_DISPLAY_NAME" \
-    --argjson context "$CONTEXT_LENGTH" \
-    --argjson output "$OUTPUT_LIMIT" \
-    --argjson reserved "$COMPACTION_RESERVED" \
-    '
-      .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
-      .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
-      .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
-      .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
-      .compaction.reserved = $reserved |
-      {
-        model,
-        small_model,
-        provider: {lmstudio: .provider.lmstudio},
-        compaction
-      }
-    ' "$PROFILE_ROOT/opencode.jsonc"
+  local role="${1:-coder}"
+  if [[ "$role" == "bureaucrat" ]]; then
+    jq -c \
+      --arg profile_root "$PROFILE_ROOT" \
+      --arg model_id "$MODEL_ID" \
+      --arg model_name "$MODEL_DISPLAY_NAME" \
+      --arg google_drive_scopes "$GOOGLE_DRIVE_MCP_SCOPES_REQUIRED" \
+      --argjson context "$CONTEXT_LENGTH" \
+      --argjson output "$OUTPUT_LIMIT" \
+      --argjson reserved "$COMPACTION_RESERVED" \
+      '
+        .default_agent = "qwen-bureaucrat" |
+        .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
+        .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
+        .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
+        .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
+        .compaction.reserved = $reserved |
+        .agent = {
+          "qwen-bureaucrat": (.agent["qwen-bureaucrat"] + {prompt: ("{file:" + $profile_root + "/prompts/qwen-bureaucrat.txt}")})
+        } |
+        .mcp = {
+          "gmail": {
+            "type": "local",
+            "command": [
+              "node",
+              ($profile_root + "/scripts/mcp-gmail.mjs")
+            ],
+            "enabled": true
+          },
+          "google_drive": {
+            "type": "local",
+            "command": [
+              "node",
+              ($profile_root + "/scripts/mcp-google-drive.mjs")
+            ],
+            "environment": {
+              "GOOGLE_DRIVE_MCP_SCOPES": $google_drive_scopes
+            },
+            "enabled": true
+          },
+          "chrome": {
+            "type": "local",
+            "command": [
+              "npx",
+              "-y",
+              "chrome-devtools-mcp@latest",
+              "--autoConnect",
+              "--slim"
+            ],
+            "enabled": true
+          }
+        } |
+        .plugin = [
+          ("file://" + $profile_root + "/.opencode-bureaucrat/plugins/qwen-bureaucrat.ts")
+        ]
+      ' "$PROFILE_ROOT/config/bureaucrat.jsonc"
+  else
+    jq -c \
+      --arg profile_root "$PROFILE_ROOT" \
+      --arg model_id "$MODEL_ID" \
+      --arg model_name "$MODEL_DISPLAY_NAME" \
+      --argjson context "$CONTEXT_LENGTH" \
+      --argjson output "$OUTPUT_LIMIT" \
+      --argjson reserved "$COMPACTION_RESERVED" \
+      '
+        .default_agent = "qwen-local" |
+        .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
+        .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
+        .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
+        .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
+        .compaction.reserved = $reserved |
+        .agent = {
+          "qwen-local": (.agent["qwen-local"] + {prompt: ("{file:" + $profile_root + "/prompts/qwen-local.txt}")})
+        } |
+        .mcp = {
+          "context7": .mcp.context7,
+          "gh_grep": .mcp.gh_grep
+        } |
+        .plugin = [
+          ("file://" + $profile_root + "/.opencode-coder/plugins/qwen-local.ts")
+        ]
+      ' "$PROFILE_ROOT/config/coder.jsonc"
+  fi
 }
 
 configure_opencode_environment() {
-  export OPENCODE_CONFIG="$PROFILE_ROOT/opencode.jsonc"
-  export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode"
+  local role="${1:-coder}"
+  if [[ "$role" == "bureaucrat" ]]; then
+    export OPENCODE_CONFIG="$PROFILE_ROOT/config/bureaucrat.jsonc"
+    export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode-bureaucrat"
+    export GOOGLE_DRIVE_MCP_SCOPES="$GOOGLE_DRIVE_MCP_SCOPES_REQUIRED"
+  else
+    export OPENCODE_CONFIG="$PROFILE_ROOT/config/coder.jsonc"
+    export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode-coder"
+  fi
   export OPENCODE_CONFIG_CONTENT
-  OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content)"
-  export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
+  OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content "$role")"
+  if [[ "$role" == "coder" ]]; then
+    export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
+  else
+    unset OPENCODE_EXPERIMENTAL_LSP_TOOL 2>/dev/null || true
+  fi
   export OPENCODE_ENABLE_EXA=true
   export OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true
   export QWENOC_OUTPUT_LIMIT="$OUTPUT_LIMIT"
   export QWENOC_PROFILE_TIER="$PROFILE_TIER"
+  export QWENOC_ROLE="$role"
 }
 
 model_is_installed() {
