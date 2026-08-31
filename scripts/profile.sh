@@ -12,6 +12,7 @@ TESTED_OPENCODE_VERSION="1.18.17"
 TESTED_LM_STUDIO_VERSION="0.4.21+2"
 TESTED_LLAMA_RUNTIME_VERSION="2.28.2"
 LMSTUDIO_URL="http://127.0.0.1:1234"
+GMAIL_MCP_SCOPES_REQUIRED="gmail.modify"
 GOOGLE_DRIVE_MCP_SCOPES_REQUIRED="drive,documents,spreadsheets"
 CHROME_APPLICATION_ID="com.google.Chrome"
 CHROME_USER_DATA_DIR="$HOME/Library/Application Support/Google/Chrome"
@@ -180,6 +181,51 @@ newest_desktop_oauth_key() {
 
   if [[ -n "$newest" ]]; then
     printf '%s\n' "$newest"
+  fi
+}
+
+gmail_mcp_authorization_is_current() {
+  local token_path="$1"
+
+  [[ -f "$token_path" ]] && jq -e \
+    --arg required_scope "$GMAIL_MCP_SCOPES_REQUIRED" \
+    '.scopes == [$required_scope]' \
+    "$token_path" >/dev/null 2>&1
+}
+
+google_drive_mcp_authorizations_are_current() {
+  local token_path="$1"
+
+  [[ -f "$token_path" ]] && jq -e \
+    --arg required_aliases "$GOOGLE_DRIVE_MCP_SCOPES_REQUIRED" \
+    '
+      def required_scope_urls:
+        ($required_aliases | split(",") | map(
+          if . == "drive" then "https://www.googleapis.com/auth/drive"
+          elif . == "documents" then "https://www.googleapis.com/auth/documents"
+          elif . == "spreadsheets" then "https://www.googleapis.com/auth/spreadsheets"
+          else error("Unsupported required Google Drive scope alias: " + .)
+          end
+        )) + ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+        | unique | sort;
+      .version == 2 and
+      (.accounts | type) == "object" and
+      (.accounts | length) > 0 and
+      all(.accounts[];
+        ((.scope // "") | split(" ") | map(select(length > 0)) | unique | sort)
+          == required_scope_urls
+      )
+    ' \
+    "$token_path" >/dev/null 2>&1
+}
+
+google_drive_mcp_account_aliases() {
+  local token_path="$1"
+
+  if [[ -f "$token_path" ]]; then
+    jq -r \
+      'if .version == 2 and (.accounts | type) == "object" then .accounts | keys[] else empty end' \
+      "$token_path" 2>/dev/null || true
   fi
 }
 
