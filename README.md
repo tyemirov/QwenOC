@@ -106,7 +106,7 @@ The 48 GiB Q6_K and 32 GiB Q4_K_M tiers are defined and configuration-tested, bu
 - At least 32 GiB physical memory; 48 GiB and 64 GiB automatically select higher tiers
 - Between 22 GiB and 35 GiB free before download, depending on the selected tier
 - [Homebrew](https://brew.sh/)
-- Internet access during installation and for the two configured MCP servers
+- Internet access during installation, Google authorization, and configured MCP use
 
 ## Install
 
@@ -155,8 +155,10 @@ Double-click `launch-bureaucrat.command` and choose your office workspace direct
 
 - Tuned for executive assistance, Gmail correspondence, Google Drive document organization, and Google Sheets tabular modeling.
 - Gated safety permissions: draft creation is automatic, but sending emails or deleting records always requires explicit human confirmation.
-- Authorizes only the Google Drive, Docs, and Sheets scopes exposed by this profile;
-  it does not request Google Slides or Calendar access.
+- Authorizes Gmail with `gmail.modify`; the Drive MCP requests `drive`,
+  `documents`, and `spreadsheets`, plus `openid` and account-email identity scopes
+  used to label connected accounts. It does not request Gmail settings, Google
+  Slides, or Calendar access.
 - Browser tools reuse the existing Chrome Stable session, including its open tabs
   and authenticated state.
 
@@ -176,29 +178,70 @@ marker before loading the model. Reusing the personal browser session gives the
 agent access to its open tabs, cookies, local storage, and signed-in accounts;
 enable this only for a trusted agent.
 
-#### Google Workspace Prerequisites & Setup:
+#### Google Workspace authentication
 
-Because Google classifies Gmail, Google Drive, and Google Sheets as restricted scopes, Google requires a standard **Desktop OAuth 2.0 Client ID** to authorize local MCP servers. Note: The `gcloud` CLI is **not** required; setup is performed via the web console.
+Bureaucrat uses a local **Desktop OAuth 2.0 Client ID**. Its `gmail.modify` and
+full-Drive scopes are restricted; the Docs and Sheets scopes are sensitive. The
+`gcloud` CLI is optional because the complete setup is available in the web console.
 
-1. **Google Cloud Console Setup (One-time)**:
+1. **Configure one Google Cloud project**:
    - Create or select a project in the [Google Cloud Console](https://console.cloud.google.com/).
-   - Under **APIs & Services > Library**, enable:
-     - **Gmail API**
-     - **Google Drive API**
-     - **Google Sheets API**
-     - **Google Docs API**
-   - Under **APIs & Services > Google Auth Platform** (or OAuth consent screen), enter an app name (e.g. `Bureaucrat`), your email address, and select **External** (or Internal for Workspace organizations).
+   - Under **APIs & Services > Library**, enable the **Gmail API**, **Google Drive
+     API**, **Google Sheets API**, and **Google Docs API**.
+   - In **Google Auth Platform > Branding**, enter an app name such as
+     `Bureaucrat`, a user-support email address, and a developer-contact email address.
+   - In **Audience**, select **Internal** for an eligible Workspace organization or
+     **External** for other Google accounts. For an External app in **Testing**, add
+     every account that will authorize Bureaucrat under **Test users**.
+   - In **Data Access**, add these Workspace data scopes:
+     `https://www.googleapis.com/auth/gmail.modify`,
+     `https://www.googleapis.com/auth/drive`,
+     `https://www.googleapis.com/auth/documents`, and
+     `https://www.googleapis.com/auth/spreadsheets`. The Drive MCP also requests
+     standard `openid` and `userinfo.email` identity scopes so it can distinguish
+     connected accounts.
 
-2. **Download OAuth Client Key**:
-   - Navigate to **APIs & Services > Credentials** > **+ CREATE CREDENTIALS** > **OAuth client ID**.
-   - Set Application Type to **Desktop app**.
-   - Name the client (e.g. `Bureaucrat`) and click **Create**.
-   - Click **Download JSON** (or save to `~/.gmail-mcp/gcp-oauth.keys.json`).
+2. **Download the desktop client key**:
+   - Open **APIs & Services > Credentials**, select **Create credentials > OAuth
+     client ID**, and choose **Desktop app**.
+   - Download the JSON file. Leave the generated `client_secret_*.json` file in
+     `~/Downloads`, or save it as `~/.gmail-mcp/gcp-oauth.keys.json`.
+   - Each user must create their own desktop client key. The launcher copies keys
+     only between the two user-local MCP directories and never into this repository.
 
-3. **Launch & Authorize**:
+3. **Complete both authorization flows**:
    - Run `./launch-bureaucrat.command`.
-   - On first launch, the script automatically synchronizes the keys to `~/.config/google-drive-mcp/` and opens your default browser to Google's consent screen.
-   - Click **Allow**. Your tokens are saved locally in `~/.gmail-mcp/` and `~/.config/google-drive-mcp/`, enabling persistent, private access for all future sessions.
+   - The launcher validates and copies the desktop key to both MCP configuration
+     directories. It then opens separate consent flows for Gmail and Google Drive.
+   - Approve both flows. Gmail stores its token in
+     `~/.gmail-mcp/credentials.json`; Drive, Docs, and Sheets store theirs in
+     `~/.config/google-drive-mcp/tokens.json`. Both files remain local and are
+     created with user-only permissions by their MCP servers.
+   - Treat the client key and token files as secrets. Repository ignore rules cover
+     their standard filenames as a second layer of protection.
+
+4. **Verify the connected accounts**:
+   - In Bureaucrat, run `/connect` to inspect and select the effective Drive account.
+   - Verify Gmail separately with a harmless read request, such as asking Bureaucrat
+     to count messages received today. Drive status does not prove Gmail access.
+
+Google [expires each test user's authorization after seven days](https://support.google.com/cloud/answer/15549945)
+for External apps in **Testing**.
+The MCP servers refresh valid tokens automatically, but revoked, expired, or
+scope-changed authorizations require a new consent flow. Reauthorize both MCPs, or
+one of them, without launching the model. Drive reauthorization covers every
+account alias already stored by its MCP:
+
+```bash
+./launch-bureaucrat.command --reauthorize
+./launch-bureaucrat.command --reauthorize gmail
+./launch-bureaucrat.command --reauthorize drive
+```
+
+Moving an External app to **In production** removes the seven-day Testing expiry;
+Google may require verification for the requested sensitive and restricted scopes.
+On normal startup, the launcher compares every saved grant with this exact scope
+contract and requests re-consent when it finds an older or broader grant.
 
 When an OpenCode session ends, the launcher automatically unloads the heavy Qwen model from unified memory (and stops the background LM Studio server if it was started by the launcher), immediately releasing all system resources.
 
@@ -237,7 +280,10 @@ The doctor checks:
 - Live tier-specific context, Flash Attention, and `speculative_draft_mtp: true`
   when the runtime is available or `--require-live` is selected
 - Resolved OpenCode model, agent, compaction, and MCP settings
+- Saved Gmail and every Drive account authorization against the exact scope contract
 - Live Context7 and `gh_grep` connections
+- Live Bureaucrat Gmail, Drive, and Chrome MCP transport initialization; verify the
+  effective Drive identity with `/connect` and Gmail with a safe read request
 
 The launcher also exposes the same check:
 
@@ -255,18 +301,6 @@ The launcher also exposes the same check:
 - The provider uses one 30-minute request deadline. It does not impose a shorter between-chunk SSE deadline while LM Studio is processing a long prompt.
 
 The local plugin applies the model's generation defaults and adds task state, verification evidence, unresolved failures, and the next action to OpenCode's compaction context.
-
-## Detailed performance record
-
-On the tested 64 GiB Q8_0 tier, eight completed MTP generations produced 6,977 tokens:
-
-- Token-weighted generation speed: 13.41 tokens/second
-- Median run: 15.80 tokens/second
-- Observed range: 12.44–20.15 tokens/second
-- Long coding generations: approximately 12.4–13.0 tokens/second
-- MTP drafts accepted: 3,813 of 4,134, or 92.24%
-
-Prompt processing is separate from generation. The tested system processed long prompts at approximately 86–130 tokens/second.
 
 ## Runtime hygiene
 
