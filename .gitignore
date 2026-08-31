@@ -2,6 +2,12 @@
 .env
 .env.*
 !.env.example
+client_secret_*.json
+gcp-oauth.keys.json
+credentials.json
+tokens.json
+.gcp-saved-tokens.json
+google-tokens.json
 *.log
 *.tmp
 *.part
