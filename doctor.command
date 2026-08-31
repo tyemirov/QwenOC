@@ -293,6 +293,24 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
     fail "Bureaucrat profile resolution failed"
   fi
 
+  GMAIL_TOKENS="$HOME/.gmail-mcp/credentials.json"
+  DRIVE_TOKENS="$HOME/.config/google-drive-mcp/tokens.json"
+  if [[ ! -f "$GMAIL_TOKENS" && ! -f "$DRIVE_TOKENS" ]]; then
+    info "Bureaucrat Google authorizations are not configured"
+  else
+    if gmail_mcp_authorization_is_current "$GMAIL_TOKENS"; then
+      pass "Gmail authorization matches the required scope contract ($GMAIL_MCP_SCOPES_REQUIRED)"
+    else
+      fail "Gmail authorization needs scoped re-consent (launch-bureaucrat.command --reauthorize gmail)"
+    fi
+
+    if google_drive_mcp_authorizations_are_current "$DRIVE_TOKENS"; then
+      pass "Every Drive authorization matches the required data-scope contract ($GOOGLE_DRIVE_MCP_SCOPES_REQUIRED)"
+    else
+      fail "Drive authorization needs scoped re-consent (launch-bureaucrat.command --reauthorize drive)"
+    fi
+  fi
+
   # 3. Verify Live MCP Connections for Coder
   CODER_MCP_OUTPUT="$(
     cd "$PROJECT_DIR" &&
