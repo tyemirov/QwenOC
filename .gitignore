@@ -16,3 +16,7 @@ google-tokens.json
 .lmstudio/
 .opencode/node_modules/
 .opencode/skills/
+
+# BEGIN MPRLAB-GOVERNANCE
+/.mprlab/*-PLAN.md
+# END MPRLAB-GOVERNANCE
