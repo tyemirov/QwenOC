@@ -5,11 +5,53 @@ set -euo pipefail
 PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$PROFILE_DIR/scripts/profile.sh"
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf 'Usage: %s\n' "$0"
-  printf 'Detects memory, installs prerequisites, downloads the mapped Qwen quantization, loads MTP, and runs diagnostics.\n'
+while (( $# > 0 )); do
+  case "$1" in
+    --help|-h)
+      printf 'Usage: %s [--backend local|splash]\n' "$0"
+      printf 'Local installs LM Studio. Splash installs its 4-bit runtime.\n'
+      exit 0
+      ;;
+    --backend)
+      if (( $# < 2 )); then
+        printf 'The --backend option requires local or splash.\n' >&2
+        exit 2
+      fi
+      INFERENCE_BACKEND="$2"
+      shift 2
+      ;;
+    --backend=*) INFERENCE_BACKEND="${1#*=}"; shift ;;
+    *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+case "$INFERENCE_BACKEND" in
+  local|splash) ;;
+  *) printf 'Unknown backend: %s. Choose local or splash.\n' "$INFERENCE_BACKEND" >&2; exit 2 ;;
+esac
+
+if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+  BREW_BIN="$(command -v brew || true)"
+  if [[ -z "$BREW_BIN" ]]; then
+    printf 'Homebrew is required: https://brew.sh\n' >&2
+    exit 3
+  fi
+  for dependency in jq node opencode; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+      case "$dependency" in
+        opencode) "$BREW_BIN" install anomalyco/tap/opencode ;;
+        *) "$BREW_BIN" install "$dependency" ;;
+      esac
+    fi
+  done
+  ensure_splash_installed
+  initialize_inference_backend splash
+  start_splash_session
+  /bin/bash "$PROFILE_DIR/doctor.command" --backend splash --require-live "$PROFILE_DIR"
+  printf '\nSplash setup complete. Launch with --backend splash.\n'
   exit 0
 fi
+
+initialize_inference_backend local
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   printf 'This profile requires an Apple Silicon Mac.\n' >&2
@@ -142,7 +184,7 @@ if [[ -z "$CURRENT_CONTEXT" ]]; then
     --yes
 fi
 
-"$PROFILE_DIR/doctor.command" --require-live "$PROFILE_DIR"
+/bin/bash "$PROFILE_DIR/doctor.command" --require-live "$PROFILE_DIR"
 
 printf '\nInstallation complete. Launch either agent:\n'
 printf '  Coder:      %s/launch-coder.command [project-directory]\n' "$PROFILE_DIR"
