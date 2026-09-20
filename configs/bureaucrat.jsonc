@@ -1,0 +1,185 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "enabled_providers": ["lmstudio"],
+  "model": "lmstudio/qwen3.8-27b",
+  "small_model": "lmstudio/qwen3.8-27b",
+  "default_agent": "qwen-bureaucrat",
+
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio Local",
+      "options": {
+        "baseURL": "http://127.0.0.1:1234/v1",
+        "timeout": 1800000
+      },
+      "models": {
+        "qwen3.8-27b": {
+          "id": "qwen3.8-27b-gguf-q8-mtp",
+          "name": "Qwen 3.8 27B GGUF Q8_0 + MTP",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 131072,
+            "output": 32000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "chat_template_kwargs": {
+              "enable_thinking": true,
+              "preserve_thinking": true,
+              "reasoning_effort": "low"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "agent": {
+    "qwen-bureaucrat": {
+      "description": "Local executive assistant and records officer for Gmail, Google Drive, and Google Sheets",
+      "mode": "primary",
+      "model": "lmstudio/qwen3.8-27b",
+      "variant": "low",
+      "prompt": "{file:../prompts/qwen-bureaucrat.txt}",
+      "temperature": 0.5,
+      "top_p": 0.9,
+      "steps": 24,
+      "tools": {
+        "read": true,
+        "write": true,
+        "edit": true,
+        "glob": true,
+        "grep": true,
+        "bash": true,
+        "task": true,
+        "question": true,
+        "websearch": true,
+        "webfetch": true,
+        "skill": true,
+        "gmail_read_email": true,
+        "gmail_search_emails": true,
+        "gmail_draft_email": true,
+        "gmail_send_email": true,
+        "gmail_send_draft": true,
+        "gmail_update_draft": true,
+        "gmail_delete_draft": true,
+        "gmail_get_thread": true,
+        "gmail_list_inbox_threads": true,
+        "gmail_get_inbox_with_threads": true,
+        "gmail_modify_thread": true,
+        "gmail_modify_email": true,
+        "gmail_batch_modify_emails": true,
+        "gmail_list_email_labels": true,
+        "gmail_create_label": true,
+        "gmail_update_label": true,
+        "gmail_delete_label": true,
+        "gmail_get_or_create_label": true,
+        "gmail_download_attachment": true,
+        "google_drive_search": true,
+        "google_drive_readTextFile": true,
+        "google_drive_createTextFile": true,
+        "google_drive_updateTextFile": true,
+        "google_drive_createFolder": true,
+        "google_drive_listFolder": true,
+        "google_drive_readGoogleDoc": true,
+        "google_drive_createGoogleDoc": true,
+        "google_drive_updateGoogleDoc": true,
+        "google_drive_getGoogleDocContent": true,
+        "google_drive_getGoogleSheetContent": true,
+        "google_drive_createGoogleSheet": true,
+        "google_drive_updateGoogleSheet": true,
+        "google_drive_appendSpreadsheetRows": true,
+        "google_drive_getSpreadsheetInfo": true,
+        "google_drive_listGoogleSheets": true,
+        "google_drive_listGoogleDocs": true,
+        "google_drive_authGetStatus": true,
+        "google_drive_manage_accounts": true
+      },
+      "permission": {
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "edit": "allow",
+        "write": "allow",
+        "bash": "allow",
+        "question": "allow",
+        "webfetch": "allow",
+        "websearch": "allow",
+        "skill": "allow",
+        "gmail_*": "allow",
+        "google_drive_*": "allow",
+        "gmail_reply_all": "deny",
+        "gmail_*filter*": "deny",
+        "gmail_*phishing*": "deny",
+        "gmail_download_attachment": "deny",
+        "gmail_send_*": "ask",
+        "gmail_delete_*": "ask",
+        "google_drive_delete_*": "ask"
+      }
+    }
+  },
+
+  "mcp": {
+    "gmail": {
+      "type": "local",
+      "command": [
+        "node",
+        "{file:../scripts/mcp-gmail.mjs}"
+      ],
+      "enabled": true
+    },
+    "google_drive": {
+      "type": "local",
+      "command": [
+        "node",
+        "{file:../scripts/mcp-google-drive.mjs}"
+      ],
+      "environment": {
+        "GOOGLE_DRIVE_MCP_SCOPES": "drive,documents,spreadsheets"
+      },
+      "enabled": true
+    },
+    "chrome": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--autoConnect",
+        "--slim"
+      ],
+      "enabled": true
+    }
+  },
+
+  "formatter": false,
+  "lsp": false,
+  "share": "disabled",
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 32000
+  },
+  "watcher": {
+    "ignore": [
+      ".git/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      ".next/**",
+      ".venv/**",
+      "vendor/**"
+    ]
+  }
+}
