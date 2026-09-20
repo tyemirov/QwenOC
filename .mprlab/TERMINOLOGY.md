@@ -95,6 +95,14 @@ Give each term one meaning. Use the same term for the same concept in all docume
 
 Add repository-specific technical nouns below this line.
 
+- `DFlash 2`: The draft model system that Splash uses for speculative decoding.
+- `model package`: The weights, tokenizer, and metadata that an inference runtime loads.
+- `quantization`: The numerical representation of model weights at a specified precision.
+- `reasoning effort`: The model setting that controls the extent of reasoning before an answer.
+- `Splash`: The Inco AI inference runtime for supported Apple Silicon Macs.
+- `unified memory`: The memory that the CPU and GPU share on an Apple Silicon Mac.
+
+
 ```text
 - `term`: Definition with one meaning.
 ```
