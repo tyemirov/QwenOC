@@ -7,9 +7,9 @@ PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$PROFILE_DIR/scripts/profile.sh"
 
 usage() {
-  printf 'Usage: %s [--require-live] [project-directory]\n' "$0"
+  printf 'Usage: %s [--backend local|splash] [--require-live] [project-directory]\n' "$0"
   printf 'Checks the host, installed model, OpenCode profiles, and MCP connections without changing runtime state.\n'
-  printf 'Use --require-live to require the exact LM Studio model to be loaded and reachable.\n'
+  printf 'Use --require-live to require the selected local model server.\n'
 }
 
 REQUIRE_LIVE=0
@@ -19,6 +19,17 @@ while (( $# > 0 )); do
     --help|-h)
       usage
       exit 0
+      ;;
+    --backend)
+      if (( $# < 2 )); then
+        printf 'The --backend option requires local or splash.\n' >&2
+        exit 2
+      fi
+      INFERENCE_BACKEND="$2"
+      shift
+      ;;
+    --backend=*)
+      INFERENCE_BACKEND="${1#*=}"
       ;;
     --require-live)
       REQUIRE_LIVE=1
@@ -86,6 +97,63 @@ mcp_server_is_connected() {
     END { exit(found ? 0 : 1) }
   ' <<<"$status_output"
 }
+
+initialize_inference_backend "$INFERENCE_BACKEND" || exit $?
+
+if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+  OPENCODE_BIN="$(resolve_opencode_bin)"
+  if [[ -z "$OPENCODE_BIN" ]]; then
+    fail "OpenCode was not found in PATH"
+  elif ! version_at_least "$("$OPENCODE_BIN" --version)" "$MIN_OPENCODE_VERSION"; then
+    fail "OpenCode $MIN_OPENCODE_VERSION or newer is required"
+  fi
+  if [[ ! -d "$PROJECT_DIR" ]]; then
+    fail "Target project does not exist: $PROJECT_DIR"
+  fi
+  if splash_is_listening; then
+    if read_splash_runtime; then
+      pass "Splash serves $MODEL_ID with a $CONTEXT_LENGTH-token context"
+    else
+      fail "Splash runtime does not match the selected profile"
+    fi
+  elif [[ "$REQUIRE_LIVE" -eq 1 ]]; then
+    fail "Splash is not running at $SPLASH_URL"
+  elif command -v splash >/dev/null 2>&1; then
+    info "Splash is stopped; live checks skipped"
+  else
+    fail "Splash was not found; run install.command --backend splash"
+  fi
+  if (( FAILURES == 0 )); then
+    for role in coder bureaucrat; do
+      configure_opencode_environment "$role" || exit $?
+      if RESOLVED_CONFIG="$(cd "$PROJECT_DIR" && "$OPENCODE_BIN" debug config)" &&
+        jq -e --arg model "$OPENCODE_MODEL" --arg id "$MODEL_ID" \
+          --arg url "$SPLASH_URL/v1" --argjson context "$CONTEXT_LENGTH" \
+          --argjson output "$OUTPUT_LIMIT" '
+          .model == $model and .small_model == $model and
+          .enabled_providers == ["splash"] and
+          ((.disabled_providers // []) | index("splash")) == null and
+          .agent[.default_agent].model == $model and
+          .provider.splash.npm == "@ai-sdk/openai-compatible" and
+          .provider.splash.options.baseURL == $url and
+          .provider.splash.models[$id].limit.context == $context and
+          .provider.splash.models[$id].limit.output == $output and
+          .provider.splash.models[$id].options.reasoningEffort == "medium" and
+          .compaction.reserved == $output
+        ' <<<"$RESOLVED_CONFIG" >/dev/null; then
+        pass "Resolved Splash $role configuration"
+      else
+        fail "Resolved Splash $role configuration conflicts with this profile"
+      fi
+    done
+  fi
+  if (( FAILURES > 0 )); then
+    printf '\nDoctor found %d failure(s).\n' "$FAILURES" >&2
+    exit 1
+  fi
+  printf '\nReady: Splash configuration checks passed.\n'
+  exit 0
+fi
 
 if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
   pass "Apple Silicon macOS host"
@@ -215,7 +283,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
   CODER_CONFIG_CONTENT="$(runtime_opencode_config_content coder 2>/dev/null || true)"
   RESOLVED_CODER_CONFIG="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/config/coder.jsonc" \
+      OPENCODE_CONFIG="$PROFILE_DIR/configs/coder.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
       OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
       OPENCODE_EXPERIMENTAL_LSP_TOOL=true \
@@ -252,7 +320,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
   BUREAUCRAT_CONFIG_CONTENT="$(runtime_opencode_config_content bureaucrat 2>/dev/null || true)"
   RESOLVED_BUREAUCRAT_CONFIG="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/config/bureaucrat.jsonc" \
+      OPENCODE_CONFIG="$PROFILE_DIR/configs/bureaucrat.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
       OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
       OPENCODE_ENABLE_EXA=true \
@@ -314,7 +382,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
   # 3. Verify Live MCP Connections for Coder
   CODER_MCP_OUTPUT="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/config/coder.jsonc" \
+      OPENCODE_CONFIG="$PROFILE_DIR/configs/coder.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
       OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
@@ -331,7 +399,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
   # 4. Verify Live MCP Connections for Bureaucrat
   BUREAUCRAT_MCP_OUTPUT="$(
     cd "$PROJECT_DIR" &&
-      OPENCODE_CONFIG="$PROFILE_DIR/config/bureaucrat.jsonc" \
+      OPENCODE_CONFIG="$PROFILE_DIR/configs/bureaucrat.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
       OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \

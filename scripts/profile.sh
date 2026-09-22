@@ -3,7 +3,8 @@
 # Canonical runtime contract shared by setup, diagnostics, and launch.
 SCRIPT_PATH="${BASH_SOURCE[0]:-${(%):-%x}}"
 PROFILE_ROOT="$(cd "$(dirname "${SCRIPT_PATH:-$0}")/.." && pwd)"
-MODEL_TIER_MAP="$PROFILE_ROOT/config/model-tiers.tsv"
+MODEL_TIER_MAP="$PROFILE_ROOT/configs/model-tiers.tsv"
+INFERENCE_BACKEND="local"
 MODEL_BASE_KEY="qwen/qwen3.8-27b"
 MODEL_FORMAT="gguf"
 MIN_SUPPORTED_MEMORY_GIB="32"
@@ -72,16 +73,37 @@ select_model_profile_for_memory() {
   return 0
 }
 
-DETECTED_MEMORY_GIB="$(physical_memory_gib)"
-HARDWARE_PROFILE_SUPPORTED=1
-if ! select_model_profile_for_memory "$DETECTED_MEMORY_GIB"; then
-  HARDWARE_PROFILE_SUPPORTED=0
-  # Keep all contract variables defined so diagnostics can report the minimum tier.
-  select_model_profile_for_memory "$MIN_SUPPORTED_MEMORY_GIB" || {
-    printf 'Invalid or unreadable model tier map: %s\n' "$MODEL_TIER_MAP" >&2
-    return 1 2>/dev/null || exit 1
-  }
-fi
+initialize_local_profile() {
+  DETECTED_MEMORY_GIB="$(physical_memory_gib)"
+  HARDWARE_PROFILE_SUPPORTED=1
+  if ! select_model_profile_for_memory "$DETECTED_MEMORY_GIB"; then
+    HARDWARE_PROFILE_SUPPORTED=0
+    # Keep diagnostic values defined on unsupported local hardware.
+    select_model_profile_for_memory "$MIN_SUPPORTED_MEMORY_GIB" || {
+      printf 'Invalid or unreadable model tier map: %s\n' "$MODEL_TIER_MAP" >&2
+      return 1
+    }
+  fi
+  OPENCODE_MODEL="lmstudio/qwen3.8-27b"
+}
+
+source "$PROFILE_ROOT/scripts/splash.sh"
+
+initialize_inference_backend() {
+  INFERENCE_BACKEND="$1"
+  case "$INFERENCE_BACKEND" in
+    local)
+      initialize_local_profile
+      ;;
+    splash)
+      initialize_splash_profile
+      ;;
+    *)
+      printf 'Unknown backend: %s. Choose local or splash.\n' "$INFERENCE_BACKEND" >&2
+      return 2
+      ;;
+  esac
+}
 
 SESSION_LOCK_DIR="${TMPDIR:-/tmp}"
 SESSION_LOCK_DIR="${SESSION_LOCK_DIR%/}/opencode-qwen3.8-27b.lock"
@@ -229,7 +251,7 @@ google_drive_mcp_account_aliases() {
   fi
 }
 
-runtime_opencode_config_content() {
+role_opencode_config_content() {
   local role="${1:-coder}"
   if [[ "$role" == "bureaucrat" ]]; then
     jq -c \
@@ -285,7 +307,7 @@ runtime_opencode_config_content() {
         .plugin = [
           ("file://" + $profile_root + "/.opencode-bureaucrat/plugins/qwen-bureaucrat.ts")
         ]
-      ' "$PROFILE_ROOT/config/bureaucrat.jsonc"
+      ' "$PROFILE_ROOT/configs/bureaucrat.jsonc"
   else
     jq -c \
       --arg profile_root "$PROFILE_ROOT" \
@@ -295,12 +317,12 @@ runtime_opencode_config_content() {
       --argjson output "$OUTPUT_LIMIT" \
       --argjson reserved "$COMPACTION_RESERVED" \
       '
-        .default_agent = "qwen-local" |
         .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
         .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
         .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
         .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
         .compaction.reserved = $reserved |
+        .default_agent = "qwen-local" |
         .agent = {
           "qwen-local": (.agent["qwen-local"] + {prompt: ("{file:" + $profile_root + "/prompts/qwen-local.txt}")})
         } |
@@ -311,22 +333,30 @@ runtime_opencode_config_content() {
         .plugin = [
           ("file://" + $profile_root + "/.opencode-coder/plugins/qwen-local.ts")
         ]
-      ' "$PROFILE_ROOT/config/coder.jsonc"
+      ' "$PROFILE_ROOT/configs/coder.jsonc"
+  fi
+}
+
+runtime_opencode_config_content() {
+  if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+    role_opencode_config_content "$@" | splash_config_content
+  else
+    role_opencode_config_content "$@"
   fi
 }
 
 configure_opencode_environment() {
   local role="${1:-coder}"
   if [[ "$role" == "bureaucrat" ]]; then
-    export OPENCODE_CONFIG="$PROFILE_ROOT/config/bureaucrat.jsonc"
+    export OPENCODE_CONFIG="$PROFILE_ROOT/configs/bureaucrat.jsonc"
     export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode-bureaucrat"
     export GOOGLE_DRIVE_MCP_SCOPES="$GOOGLE_DRIVE_MCP_SCOPES_REQUIRED"
   else
-    export OPENCODE_CONFIG="$PROFILE_ROOT/config/coder.jsonc"
+    export OPENCODE_CONFIG="$PROFILE_ROOT/configs/coder.jsonc"
     export OPENCODE_CONFIG_DIR="$PROFILE_ROOT/.opencode-coder"
   fi
   export OPENCODE_CONFIG_CONTENT
-  OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content "$role")"
+  OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content "$role")" || return
   if [[ "$role" == "coder" ]]; then
     export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
   else
@@ -337,6 +367,7 @@ configure_opencode_environment() {
   export QWENOC_OUTPUT_LIMIT="$OUTPUT_LIMIT"
   export QWENOC_PROFILE_TIER="$PROFILE_TIER"
   export QWENOC_ROLE="$role"
+  export QWENOC_BACKEND="$INFERENCE_BACKEND"
 }
 
 model_is_installed() {
@@ -413,7 +444,7 @@ active_opencode_session_pids() {
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
     command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    if [[ "$command" == *"--model lmstudio/qwen3.8-27b"* ]]; then
+    if [[ "$command" == *"--model lmstudio/qwen3.8-27b"* || "$command" == *"--model splash/$SPLASH_MODEL_ID"* ]]; then
       printf '%s\n' "$pid"
     fi
   done < <(pgrep -x opencode 2>/dev/null || true)

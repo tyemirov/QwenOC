@@ -5,18 +5,30 @@ set -euo pipefail
 PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$PROFILE_DIR/scripts/profile.sh"
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf 'Usage: %s [workspace-directory] [-- OpenCode options]\n' "$0"
-  printf '       %s --doctor [--require-live] [workspace-directory]\n' "$0"
-  printf '       %s --reauthorize [gmail|drive|all]\n' "$0"
-  printf 'Launches Qwen The Bureaucrat (qwen-bureaucrat) for Gmail, Drive, and Sheets.\n'
-  exit 0
-fi
-
-if [[ "${1:-}" == "--doctor" ]]; then
-  shift
-  exec "$PROFILE_DIR/doctor.command" "$@"
-fi
+while (( $# > 0 )); do
+  case "$1" in
+    --help|-h)
+      printf 'Usage: %s [--backend local|splash] [workspace-directory] [-- OpenCode options]\n' "$0"
+      printf '       %s [--backend local|splash] --doctor [--require-live] [workspace-directory]\n' "$0"
+      printf '       %s --reauthorize [gmail|drive|all]\n' "$0"
+      exit 0 ;;
+    --backend)
+      if (( $# < 2 )); then
+        printf 'The --backend option requires local or splash.\n' >&2
+        exit 2
+      fi
+      INFERENCE_BACKEND="$2"; shift 2 ;;
+    --backend=*) INFERENCE_BACKEND="${1#*=}"; shift ;;
+    --doctor)
+      shift
+      exec /bin/bash "$PROFILE_DIR/doctor.command" --backend "$INFERENCE_BACKEND" "$@" ;;
+    *) break ;;
+  esac
+done
+case "$INFERENCE_BACKEND" in
+  local|splash) ;;
+  *) printf 'Bureaucrat requires the local or splash backend.\n' >&2; exit 2 ;;
+esac
 
 REAUTHORIZE_TARGET=""
 if [[ "${1:-}" == "--reauthorize" ]]; then
@@ -39,7 +51,14 @@ if [[ "${1:-}" == "--reauthorize" ]]; then
   fi
 fi
 
-if [[ -z "$REAUTHORIZE_TARGET" && "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
+if [[ -z "$REAUTHORIZE_TARGET" ]]; then
+  initialize_inference_backend "$INFERENCE_BACKEND"
+  if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+    prepare_splash_runtime
+  fi
+fi
+
+if [[ -z "$REAUTHORIZE_TARGET" && "$INFERENCE_BACKEND" == "local" && "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
   printf 'QwenOC requires at least %s GiB of physical memory; detected %s GiB.\n' \
     "$MIN_SUPPORTED_MEMORY_GIB" "${DETECTED_MEMORY_GIB:-unknown}" >&2
   exit 2
@@ -69,11 +88,13 @@ fi
 
 # Verify core dependencies
 if [[ -z "$REAUTHORIZE_TARGET" ]]; then
-  LMS_BIN="$(resolve_lms_bin)"
   OPENCODE_BIN="$(resolve_opencode_bin)"
-  if [[ ! -x "$LMS_BIN" ]]; then
-    printf 'LM Studio CLI was not found. Open LM Studio and install its CLI integration.\n' >&2
-    exit 3
+  if [[ "$INFERENCE_BACKEND" == "local" ]]; then
+    LMS_BIN="$(resolve_lms_bin)"
+    if [[ -z "$LMS_BIN" ]]; then
+      printf 'LM Studio CLI was not found. Open LM Studio and install its CLI integration.\n' >&2
+      exit 3
+    fi
   fi
   if [[ -z "$OPENCODE_BIN" || ! -x "$OPENCODE_BIN" ]]; then
     printf 'OpenCode was not found in PATH.\n' >&2
@@ -248,6 +269,11 @@ if ! google_drive_mcp_authorizations_are_current "$DRIVE_TOKENS"; then
     printf '\nGoogle Drive authorization did not complete. Please re-run to authorize.\n' >&2
     exit 4
   fi
+fi
+
+if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+  launch_splash_opencode bureaucrat "$WORKSPACE_DIR" "$@"
+  exit $?
 fi
 
 # Session locking

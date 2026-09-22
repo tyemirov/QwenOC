@@ -4,6 +4,10 @@ QwenOC is a portable local-coding profile for OpenCode, LM Studio, and Qwen 3.8 
 
 The profile keeps inference on the Mac, provides a Qwen-specific system prompt and generation tuning, enables automatic context compaction, and connects the Context7 and `gh_grep` MCP servers for current documentation and public-code examples.
 
+For Splash 4-bit inference, use `--backend splash`.
+See [Splash setup and validation](docs/splash.md) for installation, both agent launchers, and diagnostics.
+The default backend remains LM Studio.
+
 ## Why this setup
 
 QwenOC is designed for people who want a capable coding agent running locally, not merely the smallest model or the highest isolated token benchmark. It spends the memory available on the highest configured precision, then recovers generation speed with MTP speculative decoding and an optimized Apple Silicon runtime.
@@ -20,7 +24,7 @@ QwenOC is designed for people who want a capable coding agent running locally, n
 
 ### Adaptive memory profiles
 
-The canonical map lives in [`config/model-tiers.tsv`](config/model-tiers.tsv). `install.command`, `launch-opencode.command`, and `doctor.command` read the same file every time they start.
+The canonical map lives in [`configs/model-tiers.tsv`](configs/model-tiers.tsv). `install.command`, `launch-opencode.command`, and `doctor.command` read the same file every time they start.
 
 | Detected unified memory | Profile | Exact quantization | Context | Output and compaction reserve | Minimum free space before download |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -30,7 +34,7 @@ The canonical map lives in [`config/model-tiers.tsv`](config/model-tiers.tsv). `
 
 The launcher verifies the exact downloaded and selected variant before loading it. A machine with multiple installed variants may require one LM Studio source selection; subsequent launches verify that choice and stop with the precise correction if it changes. Machines below 32 GiB are reported as unsupported by the current map.
 
-The quality/Q8_0 tier is measured on the 64 GiB test Mac. The balanced and compact tiers have configuration-level validation, but their throughput and maximum sustained memory use still need measurements on 48 GiB and 32 GiB hardware.
+The quality/Q8_0 tier has measurements from a 64 GiB Mac. Configuration tests cover the balanced and compact tiers. Their throughput and maximum memory use are not measured. Software validation is sufficient for acceptance.
 
 ### Quality: why Qwen 3.8 27B and adaptive precision
 
@@ -98,7 +102,7 @@ The result is a practical range: quality-oriented Q8 local inference where memor
 
 This repository contains configuration and scripts. The installer downloads the model directly through LM Studio.
 
-The 48 GiB Q6_K and 32 GiB Q4_K_M tiers are defined and configuration-tested, but have not yet been benchmarked on those physical machines.
+Configuration tests cover the 48 GiB Q6_K and 32 GiB Q4_K_M tiers. These tests do not measure inference speed.
 
 ## Requirements
 
@@ -325,9 +329,9 @@ launch-bureaucrat.command       Launcher for Qwen The Bureaucrat (Gmail, Drive, 
 launch-opencode.command         Alias for launch-coder.command (including cleanup)
 doctor.command                  Non-destructive configuration audit
 scripts/profile.sh              Canonical model and runtime contract
-config/model-tiers.tsv          RAM, quantization, context, output, and disk-space map
-config/coder.jsonc              Dedicated OpenCode configuration for The Coder
-config/bureaucrat.jsonc         Dedicated OpenCode configuration for The Bureaucrat
+configs/model-tiers.tsv          RAM, quantization, context, output, and disk-space map
+configs/coder.jsonc              Dedicated OpenCode configuration for The Coder
+configs/bureaucrat.jsonc         Dedicated OpenCode configuration for The Bureaucrat
 opencode.jsonc                  Base OpenCode settings
 prompts/qwen-local.txt          Qwen-specific coding-agent system prompt
 prompts/qwen-bureaucrat.txt     Qwen-specific office and administrative system prompt

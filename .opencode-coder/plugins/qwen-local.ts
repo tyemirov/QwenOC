@@ -3,7 +3,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 export const QwenLocalTuning: Plugin = async () => ({
   "chat.params": async (input, output) => {
     const modelID = input.model.id.toLowerCase()
-    if (input.model.providerID !== "lmstudio" || !modelID.includes("qwen3.8-27b")) return
+    if (!["lmstudio", "splash"].includes(input.model.providerID) || !modelID.includes("qwen3.8-27b")) return
 
     // Match the generation settings shipped with the installed model.
     output.temperature = 1.0

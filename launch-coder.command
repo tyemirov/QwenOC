@@ -5,19 +5,50 @@ set -euo pipefail
 PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$PROFILE_DIR/scripts/profile.sh"
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf 'Usage: %s [project-directory] [-- OpenCode options]\n' "$0"
-  printf '       %s --doctor [--require-live] [project-directory]\n' "$0"
-  printf 'Launches Qwen The Coder (qwen-local) with local MTP inference.\n'
-  exit 0
+usage() {
+  printf 'Usage: %s [--backend local|splash] [project-directory] [-- OpenCode options]\n' "$0"
+  printf '       %s [--backend local|splash] --doctor [--require-live] [project-directory]\n' "$0"
+  printf 'Local is the default. Splash uses the Qwen 3.8 27B 4-bit package.\n'
+}
+
+RUN_DOCTOR=0
+REQUIRE_LIVE=0
+while (( $# > 0 )); do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --backend)
+      if (( $# < 2 )); then
+        printf 'The --backend option requires local or splash.\n' >&2
+        exit 2
+      fi
+      INFERENCE_BACKEND="$2"
+      shift 2
+      ;;
+    --backend=*) INFERENCE_BACKEND="${1#*=}"; shift ;;
+    --doctor) RUN_DOCTOR=1; shift ;;
+    --require-live) REQUIRE_LIVE=1; shift ;;
+    --) break ;;
+    -*) printf 'Unknown launcher option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+case "$INFERENCE_BACKEND" in
+  local|splash) ;;
+  *) printf 'Unknown backend: %s. Choose local or splash.\n' "$INFERENCE_BACKEND" >&2; exit 2 ;;
+esac
+if [[ "$RUN_DOCTOR" -eq 1 ]]; then
+  if [[ "$REQUIRE_LIVE" -eq 1 ]]; then
+    exec /bin/bash "$PROFILE_DIR/doctor.command" --backend "$INFERENCE_BACKEND" --require-live "$@"
+  fi
+  exec /bin/bash "$PROFILE_DIR/doctor.command" --backend "$INFERENCE_BACKEND" "$@"
+fi
+if [[ "$REQUIRE_LIVE" -eq 1 ]]; then
+  printf 'Use --require-live with --doctor.\n' >&2
+  exit 2
 fi
 
-if [[ "${1:-}" == "--doctor" ]]; then
-  shift
-  exec "$PROFILE_DIR/doctor.command" "$@"
-fi
-
-if [[ "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
+initialize_inference_backend "$INFERENCE_BACKEND"
+if [[ "$INFERENCE_BACKEND" == "local" && "$HARDWARE_PROFILE_SUPPORTED" -ne 1 ]]; then
   printf 'QwenOC requires at least %s GiB of physical memory; detected %s GiB.\n' \
     "$MIN_SUPPORTED_MEMORY_GIB" "${DETECTED_MEMORY_GIB:-unknown}" >&2
   exit 2
@@ -53,18 +84,29 @@ if [[ ! -d "$PROJECT_DIR" ]]; then
 fi
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
-LMS_BIN="$(resolve_lms_bin)"
 OPENCODE_BIN="$(resolve_opencode_bin)"
-if [[ ! -x "$LMS_BIN" ]]; then
-  printf 'LM Studio CLI was not found. Open LM Studio and install its CLI integration.\n' >&2
-  exit 3
-fi
-if [[ -z "$OPENCODE_BIN" || ! -x "$OPENCODE_BIN" ]]; then
+if [[ -z "$OPENCODE_BIN" ]]; then
   printf 'OpenCode was not found in PATH.\n' >&2
   exit 3
 fi
 if ! command -v jq >/dev/null 2>&1; then
-  printf 'jq is required to verify LM Studio model state.\n' >&2
+  printf 'jq is required to prepare the OpenCode configuration.\n' >&2
+  exit 3
+fi
+OPENCODE_VERSION="$("$OPENCODE_BIN" --version 2>/dev/null | tail -1)"
+if ! version_at_least "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
+  printf 'OpenCode %s or newer is required; detected %s.\n' "$MIN_OPENCODE_VERSION" "$OPENCODE_VERSION" >&2
+  exit 3
+fi
+
+if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
+  launch_splash_opencode coder "$PROJECT_DIR" "$@"
+  exit $?
+fi
+
+LMS_BIN="$(resolve_lms_bin)"
+if [[ -z "$LMS_BIN" ]]; then
+  printf 'LM Studio CLI was not found. Open LM Studio and install its CLI integration.\n' >&2
   exit 3
 fi
 
@@ -174,6 +216,6 @@ printf 'Launching [Qwen The Coder] in %s with %s (%s GiB detected).\n' \
   "$PROJECT_DIR" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$PROJECT_DIR"
 "$OPENCODE_BIN" "$PROJECT_DIR" \
-  --model "lmstudio/qwen3.8-27b" \
+  --model "$OPENCODE_MODEL" \
   --agent "qwen-local" \
   "$@"

@@ -3,4 +3,4 @@
 set -euo pipefail
 
 PROFILE_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$PROFILE_DIR/launch-coder.command" "$@"
+exec /bin/bash "$PROFILE_DIR/launch-coder.command" "$@"

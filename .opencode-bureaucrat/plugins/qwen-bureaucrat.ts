@@ -18,13 +18,15 @@ function sanitizeGrammarSchema(schema: any): any {
 export const QwenBureaucratTuning: Plugin = async () => ({
   "chat.params": async (input, output) => {
     const modelID = input.model.id.toLowerCase()
-    if (input.model.providerID !== "lmstudio" || !modelID.includes("qwen3.8-27b")) return
+    if (!["lmstudio", "splash"].includes(input.model.providerID) || !modelID.includes("qwen3.8-27b")) return
 
     // Deterministic, low-temperature parameters for administrative accuracy & formal correspondence
     output.temperature = 0.5
     output.topP = 0.9
-    output.topK = 40
-    output.options.top_k = 40
+    // Splash 1.0 accepts at most 32 candidates; use its default of 20.
+    const topK = input.model.providerID === "splash" ? 20 : 40
+    output.topK = topK
+    output.options.top_k = topK
     const configuredLimit = Number.parseInt(process.env.QWENOC_OUTPUT_LIMIT ?? "32000", 10)
     const outputLimit = Number.isFinite(configuredLimit) ? configuredLimit : 32000
     output.maxOutputTokens = Math.min(output.maxOutputTokens ?? outputLimit, outputLimit)
