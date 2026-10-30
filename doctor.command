@@ -119,7 +119,11 @@ if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
   elif [[ "$REQUIRE_LIVE" -eq 1 ]]; then
     fail "Splash is not running at $SPLASH_URL"
   elif command -v splash >/dev/null 2>&1; then
-    info "Splash is stopped; live checks skipped"
+    if check_splash_model_support; then
+      info "Splash is stopped; live checks skipped ($MODEL_ID)"
+    else
+      fail "Splash CLI does not support the selected model"
+    fi
   else
     fail "Splash was not found; run install.command --backend splash"
   fi
