@@ -1,0 +1,14 @@
+[
+  {
+    "min_memory_gib": 64,
+    "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+    "quantization": "Q8_0",
+    "format": "gguf"
+  },
+  {
+    "min_memory_gib": 36,
+    "model": "incoai/Qwen3.8-27B-Splash",
+    "quantization": "4-bit",
+    "format": "splash"
+  }
+]
