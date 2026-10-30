@@ -8,11 +8,13 @@ import subprocess
 import shutil
 import sys
 import threading
+import pytest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import test_backends
 
 MODEL = 'incoai/Qwen3.8-27B-Splash'
+Q8_MODEL = 'unsloth/Qwen3.8-27B-GGUF:Q8_0'
 REQUEST_LOG = 'Done · input 556 · output 110 · 13.5 tok/s'
 REQUEST_ERROR = 'Splash request diagnostic on stderr'
 
@@ -59,6 +61,7 @@ class TestSplash:
         self.harness = test_backends.BackendLaunchTests()
         self.harness.setUp()
         self.harness.environment['TEST_LOCAL_ALLOWED'] = '1'
+        self.harness.environment['TEST_MEMORY_GIB'] = '48'
         self.harness.environment.pop('SPLASH_API_KEY', None)
         self.server = start_server()
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -66,9 +69,75 @@ class TestSplash:
         self.harness.environment.pop('SPLASH_PORT', None)
         self.harness.environment['TEST_SPLASH_PORT'] = str(self.server.server_port)
         with self.harness.shell_environment.open('a') as script:
+            script.write('sysctl() { printf "%s\\n" "$((TEST_MEMORY_GIB * 1073741824))"; }\nexport -f sysctl\n')
             script.write('curl() { local arg; local args=(); for arg in "$@"; do case "$arg" in http://127.0.0.1:8000/*) arg="http://127.0.0.1:$TEST_SPLASH_PORT/${arg#http://127.0.0.1:8000/}" ;; esac; args+=("$arg"); done; "$TEST_CURL_BIN" "${args[@]}"; }\nexport -f curl\n')
             script.write(f'splash() {{ exec "{sys.executable}" "{Path(__file__).resolve()}" --serve "$@"; }}\nexport -f splash\n')
         self.harness.environment['TEST_SPLASH_LIFECYCLE'] = str(self.harness.directory / 'lifecycle')
+
+    @pytest.mark.parametrize('memory', [64, 96])
+    @pytest.mark.parametrize('command', ['launch-coder.command', 'launch-opencode.command', 'install.command', 'doctor.command'])
+    def test_q8_selected_on_large_hosts(self, memory: int, command: str) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = str(memory)
+        self.server.model = Q8_MODEL
+        arguments = [] if command == 'install.command' else [str(self.harness.target)]
+        result = self.harness.invoke('--backend=splash', *arguments, command=command)
+        assert result.returncode == 0, result.stderr
+        config = self.harness.record()['config']
+        assert config['model'] == config['small_model'] == 'splash/' + Q8_MODEL
+        model = config['provider']['splash']['models'][Q8_MODEL]
+        assert 'Q8_0' in model['name']
+        assert model['limit']['context'] == self.server.context
+        assert all(agent['model'] == 'splash/' + Q8_MODEL for agent in config['agent'].values())
+
+    def test_q8_rejects_existing_four_bit_server(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '64'
+        result = self.harness.invoke('--backend=splash', str(self.harness.target))
+        assert result.returncode == 5, result.stderr
+        assert Q8_MODEL in result.stderr
+        assert not self.harness.record_path.exists()
+
+    def test_q8_owned_server_uses_exact_variant(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '64'
+        self.test_owned_server_stops_and_preserves_client_exit()
+        assert self.harness.record()['config']['model'] == 'splash/' + Q8_MODEL
+
+    def test_q8_bureaucrat_preserves_workspace_tools(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '64'
+        self.server.model = Q8_MODEL
+        self.test_bureaucrat_preserves_workspace_tools(expected_model=Q8_MODEL)
+
+    @pytest.mark.parametrize('memory', [36, 63])
+    def test_four_bit_below_q8_threshold(self, memory: int) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = str(memory)
+        self.test_launcher_uses_splash_context_and_reasoning()
+
+    def test_unsupported_memory_stops_before_server_start(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '32'
+        result = self.harness.invoke('--backend=splash', str(self.harness.target))
+        assert result.returncode == 2, result.stderr
+        assert 'No Splash model profile for 32 GiB' in result.stderr
+        assert not self.harness.record_path.exists()
+
+    def test_q8_requires_gguf_capable_cli(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '64'
+        self.server.shutdown()
+        self.server.server_close()
+        with self.harness.shell_environment.open('a') as script:
+            script.write('splash() { printf "Splash package only\\n"; }\nexport -f splash\n')
+        result = self.harness.invoke('--backend=splash', str(self.harness.target))
+        assert result.returncode == 3, result.stderr
+        assert 'GGUF' in result.stderr
+        assert not Path(self.harness.environment['TEST_SPLASH_LIFECYCLE']).exists()
+
+    def test_q8_offline_doctor_checks_cli_capability(self) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = '64'
+        self.server.shutdown()
+        self.server.server_close()
+        with self.harness.shell_environment.open('a') as script:
+            script.write('splash() { printf "Splash package only\\n"; }\nexport -f splash\n')
+        result = self.harness.invoke('--backend=splash', command='doctor.command')
+        assert result.returncode == 1, result.stderr
+        assert 'GGUF' in result.stderr
 
     def teardown_method(self):
         self.server.shutdown()
@@ -192,7 +261,7 @@ class TestSplash:
         assert (lock / 'pid').read_text() == str(os.getpid())
         assert not self.harness.record_path.exists()
 
-    def test_bureaucrat_preserves_workspace_tools(self):
+    def test_bureaucrat_preserves_workspace_tools(self, expected_model=MODEL):
         home = Path(self.harness.environment['HOME'])
         gmail = home / '.gmail-mcp'
         drive = home / '.config/google-drive-mcp'
@@ -219,7 +288,7 @@ class TestSplash:
         assert result.returncode == 0, result.stderr
         config = self.harness.record()['config']
         assert config['default_agent'] == 'qwen-bureaucrat'
-        assert config['agent']['qwen-bureaucrat']['model'] == 'splash/' + MODEL
+        assert config['agent']['qwen-bureaucrat']['model'] == 'splash/' + expected_model
         assert set(config['mcp']) == {'gmail', 'google_drive', 'chrome'}
         assert not self.harness.calls_for('lms')
 
@@ -320,12 +389,12 @@ if __name__ == '__main__' and '--serve' in sys.argv:
     parser = argparse.ArgumentParser(prog='splash')
     commands = parser.add_subparsers(dest='command', required=True)
     serve = commands.add_parser('serve')
-    serve.add_argument('--model', required=True)
+    serve.add_argument('--model', required=True, help='upstream model with a GGUF variant')
     args = parser.parse_args(sys.argv[2:])
-    assert args.model == MODEL
+    assert args.model in (MODEL, Q8_MODEL)
     port = int(os.environ['TEST_SPLASH_PORT'])
     lifecycle = Path(os.environ['TEST_SPLASH_LIFECYCLE'])
-    server = start_server(port)
+    server = start_server(port, model=args.model)
     lifecycle.write_text('started\n')
     def stop(*_args):
         raise KeyboardInterrupt
