@@ -8,7 +8,7 @@ source "$PROFILE_DIR/scripts/profile.sh"
 usage() {
   printf 'Usage: %s [--backend local|splash] [project-directory] [-- OpenCode options]\n' "$0"
   printf '       %s [--backend local|splash] --doctor [--require-live] [project-directory]\n' "$0"
-  printf 'Local is the default. Splash uses the Qwen 3.8 27B 4-bit package.\n'
+  printf 'Local is the default. Splash selects Q8_0 at 64 GiB or more, and 4-bit below 64 GiB.\n'
 }
 
 RUN_DOCTOR=0
