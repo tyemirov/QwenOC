@@ -4,7 +4,8 @@ QwenOC is a portable local-coding profile for OpenCode, LM Studio, and Qwen 3.8 
 
 The profile keeps inference on the Mac, provides a Qwen-specific system prompt and generation tuning, enables automatic context compaction, and connects the Context7 and `gh_grep` MCP servers for current documentation and public-code examples.
 
-For Splash 4-bit inference, use `--backend splash`.
+For Splash inference, use `--backend splash`.
+Splash selects 8-bit weights on Macs with at least 64 GiB of memory and 4-bit weights on smaller supported Macs.
 See [Splash setup and validation](docs/splash.md) for installation, both agent launchers, and diagnostics.
 The default backend remains LM Studio.
 
