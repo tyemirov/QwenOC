@@ -2,7 +2,7 @@
 
 SPLASH_FORMULA="incoai/tap/splash"
 SPLASH_URL="http://127.0.0.1:8000"
-SPLASH_MODEL_ID="incoai/Qwen3.8-27B-Splash"
+SPLASH_MODEL_MAP="$PROFILE_ROOT/configs/splash-models.json"
 SPLASH_MAX_CONTEXT=262144
 SPLASH_STARTUP_SECONDS=1800
 SPLASH_SERVER_PID=""
@@ -32,7 +32,21 @@ ensure_splash_installed() {
 
 prepare_splash_runtime() {
   if ! splash_is_listening; then
-    ensure_splash_installed
+    ensure_splash_installed || return $?
+    check_splash_model_support
+  fi
+}
+
+check_splash_model_support() {
+  if [[ "$MODEL_FORMAT" != "gguf" ]]; then
+    return 0
+  fi
+  local help
+  if ! help="$(splash serve --help 2>&1)" || [[ "$help" != *GGUF* ]]; then
+    printf 'The installed Splash CLI cannot load the selected GGUF model: %s.\n' "$MODEL_ID" >&2
+    printf 'Install a Splash build with direct GGUF support from https://github.com/incoai/splash.\n' >&2
+    printf 'The maintainer confirmed this feature on main for the release after 1.0.2.\n' >&2
+    return 3
   fi
 }
 
@@ -47,9 +61,21 @@ initialize_splash_profile() {
       return 3
     fi
   done
-  MODEL_ID="$SPLASH_MODEL_ID"
-  MODEL_DISPLAY_NAME="Qwen 3.8 27B Splash 4-bit + DFlash 2"
-  MODEL_QUANTIZATION="4-bit"
+  local profile
+  if ! DETECTED_MEMORY_GIB="$(physical_memory_gib)" || [[ ! "$DETECTED_MEMORY_GIB" =~ ^[0-9]+$ ]]; then
+    printf 'Could not detect physical memory for the Splash model selection.\n' >&2
+    return 2
+  fi
+  if ! profile="$(jq -er --argjson memory "$DETECTED_MEMORY_GIB" '
+    map(select(.min_memory_gib <= $memory)) | max_by(.min_memory_gib) |
+    select(.model | type == "string") |
+    [.model, .quantization, .format] | @tsv
+  ' "$SPLASH_MODEL_MAP")"; then
+    printf 'No Splash model profile for %s GiB. Check %s.\n' "$DETECTED_MEMORY_GIB" "$SPLASH_MODEL_MAP" >&2
+    return 2
+  fi
+  IFS=$'\t' read -r MODEL_ID MODEL_QUANTIZATION MODEL_FORMAT <<<"$profile"
+  MODEL_DISPLAY_NAME="Qwen 3.8 27B Splash $MODEL_QUANTIZATION + DFlash 2"
   OPENCODE_MODEL="splash/$MODEL_ID"
   PROFILE_TIER="splash"
   # Offline diagnostics use a bounded profile; launch always reads the live limit.
@@ -154,12 +180,14 @@ start_splash_session() {
     return $?
   fi
   ensure_splash_installed || return $?
+  check_splash_model_support || return $?
   local log_dir="$HOME/Library/Logs/QwenOC"
   if ! mkdir -p "$log_dir" || ! SPLASH_LOG_FILE="$(mktemp "$log_dir/splash.XXXXXX")"; then
     printf 'Could not create a Splash log in %s.\n' "$log_dir" >&2
     return 5
   fi
-  printf 'Starting Splash with %s. The first run downloads about 17.4 GB.\n' "$MODEL_ID"
+  printf 'Starting Splash with %s (%s GiB detected). The first run downloads and prepares the model and draft.\n' \
+    "$MODEL_ID" "$DETECTED_MEMORY_GIB"
   printf 'Splash log: %s\n' "$SPLASH_LOG_FILE"
   splash serve --model "$MODEL_ID" </dev/null >"$SPLASH_LOG_FILE" 2>&1 &
   SPLASH_SERVER_PID=$!
