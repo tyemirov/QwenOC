@@ -9,7 +9,7 @@ while (( $# > 0 )); do
   case "$1" in
     --help|-h)
       printf 'Usage: %s [--backend local|splash]\n' "$0"
-      printf 'Local installs LM Studio. Splash installs its 4-bit runtime.\n'
+      printf 'Local installs LM Studio. Splash selects its model from physical memory.\n'
       exit 0
       ;;
     --backend)
