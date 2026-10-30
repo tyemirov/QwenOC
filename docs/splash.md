@@ -1,24 +1,46 @@
-# Splash 4-bit inference
+# Splash inference
 
-QwenOC supports the `incoai/Qwen3.8-27B-Splash` model package through `--backend splash`.
-This package contains Qwen3.8-27B 4-bit weights, a DFlash 2 draft, a vision encoder, and a tokenizer.
-The package requires Splash. LM Studio GGUF files and ordinary MLX checkpoints cannot replace this package.
+QwenOC selects a Splash model from the physical memory at each start.
+The model map is [`configs/splash-models.json`](../configs/splash-models.json).
+
+| Unified memory | Model | Quantization |
+| --- | --- | --- |
+| 64 GiB or more | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | 8-bit |
+| 36–63 GiB | `incoai/Qwen3.8-27B-Splash` | 4-bit |
+
+Both models use DFlash 2.
+The Q8_0 target weights require approximately 27.1 GiB, plus the draft, vision weights, and prepared cache.
+Splash sets the context limit from available memory at startup.
+The 4-bit package contains the target weights, draft, vision encoder, and tokenizer.
+The LM Studio model map remains separate.
 
 The [Splash README](https://github.com/incoai/splash) defines the runtime interface.
 The [model card](https://huggingface.co/incoai/Qwen3.8-27B-Splash) describes the package.
-The [6-bit request](https://github.com/incoai/splash/issues/26) asks for a separate supported package.
-QwenOC currently supports only the 4-bit Splash package.
+The [GGUF documentation](https://github.com/incoai/splash/blob/main/DEVELOPMENT.md#gguf-targets) lists Q8_0 support.
+QwenOC selects `Q8_0` for the 64 GiB profile.
+
+As of September 25, 2026, direct GGUF support is on upstream `main` and awaits the release after 1.0.2.
+The installed CLI must advertise GGUF support in `splash serve --help` before QwenOC starts a Q8_0 model.
+An older CLI produces an upgrade error.
+An existing ready server with the exact Q8_0 model can operate without a local CLI upgrade.
 
 ## Requirements
 
 Splash requires Apple M3 or newer, macOS 26.4 or later, and at least 36 GB of unified memory.
-Inco recommends at least 48 GB. The first model download is approximately 17.4 GB.
+Inco recommends at least 48 GB. The 4-bit package download is approximately 17.4 GB.
 The installer requires Homebrew and internet access.
 Splash checks its runtime requirements and available memory at startup.
 
 These requirements describe the runtime. They do not require physical devices for development or acceptance.
 
 ## Install and launch
+
+For Q8_0, first install a Splash build with direct GGUF support.
+Until the next release, follow the upstream [source build instructions](https://github.com/incoai/splash/blob/main/DEVELOPMENT.md#build-and-run).
+Add that build directory to `PATH` before the Homebrew directories.
+Check that `splash serve --help` describes GGUF model variants.
+The QwenOC installer installs the Homebrew formula when Splash is absent.
+It does not build upstream `main` or upgrade an existing installation.
 
 1. Run the installer:
 
@@ -27,7 +49,7 @@ These requirements describe the runtime. They do not require physical devices fo
    ```
 
    The installer installs missing Splash, OpenCode, Node.js, and jq dependencies.
-   Splash downloads and verifies its model package on the first run.
+   Splash downloads and prepares the selected model and draft on the first run.
    The installer checks the runtime and both agent configurations.
    It stops the server if it started that server.
 
@@ -77,8 +99,8 @@ The OpenCode exit status remains available to the caller.
 ## Port, authentication, and cache
 
 The endpoint is `http://127.0.0.1:8000/v1`.
-The installed Splash 1.0 CLI uses the fixed port 8000.
-It does not accept `--port` or read `SPLASH_PORT`.
+QwenOC uses port 8000 for both Splash model profiles.
+New Splash builds have port options, but QwenOC keeps this endpoint fixed.
 If you previously set `SPLASH_PORT`, remove it with `unset SPLASH_PORT` before launch.
 If another service uses port 8000, stop that service before launch.
 QwenOC reports the conflict and does not stop that service.
@@ -113,6 +135,8 @@ The Bureaucrat launcher retains those checks before an agent session.
 
 Run the repository checks with `make ci`. The test command requires `uv`.
 The tests use the public shell commands, a local HTTP protocol server, and controlled external CLI responses.
+Simulated memory values verify Q8_0 selection at 64 GiB and 96 GiB, plus the 4-bit selection below 64 GiB.
+The tests also check the older CLI error and rejection of a different active model.
 They cover configuration, authentication, model rejection, context limits, process ownership, and exit status.
 The protocol tests do not measure actual Splash generation quality, throughput, or memory use.
 
