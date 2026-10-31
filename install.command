@@ -38,11 +38,13 @@ if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
   for dependency in jq node opencode; do
     if ! command -v "$dependency" >/dev/null 2>&1; then
       case "$dependency" in
-        opencode) "$BREW_BIN" install anomalyco/tap/opencode ;;
+        opencode) "$BREW_BIN" install "$OPENCODE_FORMULA" ;;
         *) "$BREW_BIN" install "$dependency" ;;
       esac
     fi
   done
+  OPENCODE_BIN="$(resolve_opencode_bin)"
+  require_opencode_version
   ensure_splash_installed
   initialize_inference_backend splash
   start_splash_session
@@ -111,7 +113,7 @@ fi
 OPENCODE_BIN="$(resolve_opencode_bin)"
 if [[ -z "$OPENCODE_BIN" ]]; then
   printf 'Installing OpenCode...\n'
-  "$BREW_BIN" install anomalyco/tap/opencode
+  "$BREW_BIN" install "$OPENCODE_FORMULA"
   OPENCODE_BIN="$(resolve_opencode_bin)"
 fi
 if [[ -z "$OPENCODE_BIN" ]]; then
@@ -119,11 +121,7 @@ if [[ -z "$OPENCODE_BIN" ]]; then
   exit 3
 fi
 
-OPENCODE_VERSION="$($OPENCODE_BIN --version 2>/dev/null | tail -1)"
-if ! version_at_least "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
-  printf 'OpenCode %s or newer is required; detected %s.\n' "$MIN_OPENCODE_VERSION" "$OPENCODE_VERSION" >&2
-  exit 3
-fi
+require_opencode_version
 
 if ! model_is_installed; then
   FREE_GIB="$(df -Pk "$HOME" | awk 'NR == 2 {printf "%.0f\n", $4 / 1048576}')"
