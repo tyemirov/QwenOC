@@ -131,7 +131,21 @@ def test_sampling_through_opencode(role: str, backend: str, memory: int,
                     'enable_thinking': True, 'preserve_thinking': True, 'reasoning_effort': expected_effort}
             assert 0 < request['max_tokens'] <= config['providers'][provider]['models'][catalog_id]['limit']['output']
             if role == 'bureaucrat':
-                assert not any(key in json.dumps(request['tools']) for key in ['"pattern":', '"additionalProperties":', '"$schema":'])
+                tools = {tool['function']['name']: tool['function']['parameters'] for tool in request['tools']}
+                for name in ['glob', 'grep']:
+                    assert tools[name]['properties']['pattern']['type'] == 'string'
+                    assert 'pattern' in tools[name]['required']
+                def check_schema(schema: dict) -> None:
+                    assert not {'pattern', 'additionalProperties', '$schema'} & schema.keys()
+                    for child in schema.get('properties', {}).values():
+                        check_schema(child)
+                    if isinstance(schema.get('items'), dict):
+                        check_schema(schema['items'])
+                    for keyword in ['allOf', 'anyOf', 'oneOf', 'prefixItems']:
+                        for child in schema.get(keyword, []):
+                            check_schema(child)
+                for schema in tools.values():
+                    check_schema(schema)
         assert 'SAMPLING_OK' in result.stdout
         assert 'invalid sampling parameters' not in result.stdout
         if compact:

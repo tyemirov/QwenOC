@@ -61,6 +61,17 @@ if command == 'sysctl':
 elif command == 'uname':
     print('Darwin' if arguments == ['-s'] else 'arm64')
 elif command == 'pgrep':
+    if arguments == ['-x', 'Google Chrome']:
+        print('4320')
+    elif os.environ.get('TEST_PROCESS_COMMAND'):
+        print('4321')
+    else:
+        sys.exit(1)
+elif command == 'ps':
+    print(os.environ['TEST_PROCESS_COMMAND'])
+elif command == 'osascript':
+    print(os.environ['TEST_CHROME_APP'])
+elif command == 'gcloud':
     sys.exit(1)
 elif command == 'lms':
     if os.environ.get('TEST_LOCAL_ALLOWED') != '1':
@@ -77,7 +88,8 @@ elif command == 'lms':
     elif arguments[:1] == ['unload']:
         Path(os.environ['TEST_LOCAL_LOADED']).unlink(missing_ok=True)
     elif arguments[:1] == ['ps']:
-        print(json.dumps([{'identifier': 'qwen3.8-27b-gguf-q8-mtp', 'status': 'idle'}]))
+        print(json.dumps([{'identifier': 'qwen3.8-27b-gguf-q8-mtp',
+                           'status': os.environ.get('TEST_MODEL_STATUS', 'idle')}]))
 elif command == 'curl':
     if os.environ.get('TEST_LOCAL_ALLOWED') != '1':
         sys.exit(93)
@@ -88,7 +100,7 @@ elif command == 'curl':
             'selected_variant': 'qwen/qwen3.8-27b@q8_0', 'format': 'gguf',
             'quantization': {'name': 'Q8_0', 'bits_per_weight': 8},
             'loaded_instances': [{'id': model_id, 'config': {
-                'context_length': 131072, 'parallel': 1,
+                'context_length': int(os.environ.get('TEST_MODEL_CONTEXT', '131072')), 'parallel': 1,
                 'flash_attention': True, 'speculative_draft_mtp': True,
             }}] if loaded else [],
         }]}))
@@ -131,6 +143,9 @@ class BackendLaunchTests(unittest.TestCase):
             "sysctl",
             "uname",
             "pgrep",
+            "ps",
+            "osascript",
+            "gcloud",
             "curl",
             "open",
             "brew",
@@ -219,6 +234,94 @@ class BackendLaunchTests(unittest.TestCase):
         result = self.invoke("--backend", "local", str(self.target))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.record()["config"]["model"], LOCAL_MODEL)
+
+    def prepare_bureaucrat(self) -> None:
+        chrome_app = self.directory / 'Chrome.app'
+        chrome_bin = chrome_app / 'Contents/MacOS/Google Chrome'
+        chrome_bin.parent.mkdir(parents=True)
+        chrome_bin.symlink_to(shutil.which('true') or '/usr/bin/true')
+        self.environment['TEST_CHROME_APP'] = str(chrome_app)
+        with self.shell_environment.open('a') as output:
+            output.write("awk() { if [[ \"$1\" == '{print $NF}' ]]; then printf '144.0.0\\n'; else command awk \"$@\"; fi; }\n")
+        test_home = Path(self.environment['HOME'])
+        files = {
+            '.gmail-mcp/gcp-oauth.keys.json': {'installed': {}},
+            '.config/google-drive-mcp/gcp-oauth.keys.json': {'installed': {}},
+            '.gmail-mcp/credentials.json': {'scopes': ['gmail.modify']},
+            '.config/google-drive-mcp/tokens.json': {
+                'version': 2, 'accounts': {'test': {'scope': ' '.join([
+                    'https://www.googleapis.com/auth/drive',
+                    'https://www.googleapis.com/auth/documents',
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'openid', 'https://www.googleapis.com/auth/userinfo.email',
+                ])}},
+            },
+        }
+        for relative, value in files.items():
+            path = test_home / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(value))
+        port_file = test_home / 'Library/Application Support/Google/Chrome/DevToolsActivePort'
+        port_file.parent.mkdir(parents=True)
+        port_file.write_text('9222\n/devtools/browser/test\n')
+
+    def test_rejected_startup_preserves_active_model(self) -> None:
+        self.prepare_bureaucrat()
+        self.environment.update(TEST_LOCAL_ALLOWED='1', TEST_MODEL_STATUS='busy', TEST_MODEL_CONTEXT='4096')
+        loaded = Path(self.environment['TEST_LOCAL_LOADED'])
+        for command in ['launch-coder.command', 'launch-bureaucrat.command']:
+            with self.subTest(command=command):
+                loaded.write_text('loaded')
+                self.calls.unlink(missing_ok=True)
+                result = self.invoke(str(self.target), command=command)
+                self.assertEqual(result.returncode, 6, result.stderr)
+                self.assertIn('active with the wrong load configuration', result.stderr)
+                self.assertTrue(loaded.exists())
+                self.assertFalse(self.record_path.exists())
+                self.assertFalse(any(call['arguments'][0] in ['load', 'unload']
+                                     for call in self.calls_for('lms')))
+                self.assertFalse((self.directory / 'opencode-qwen3.8-27b.lock').exists())
+
+    def test_session_detection_with_current_opencode_commands(self) -> None:
+        self.environment['TEST_LOCAL_ALLOWED'] = '1'
+        for process, expected_code in [
+            ('opencode --standalone /tmp/project', 7),
+            ('opencode run --standalone --format json prompt', 7),
+            ('opencode --model lmstudio/qwen3.8-27b#medium /tmp/project', 7),
+            ('opencode --model other/model /tmp/project', 0),
+        ]:
+            with self.subTest(process=process):
+                self.environment['TEST_PROCESS_COMMAND'] = process
+                self.calls.unlink(missing_ok=True)
+                self.record_path.unlink(missing_ok=True)
+                result = self.invoke(str(self.target))
+                self.assertEqual(result.returncode, expected_code, result.stderr)
+                self.assertNotIn('unbound variable', result.stderr)
+                if expected_code == 7:
+                    self.assertIn('4321', result.stderr)
+                    self.assertEqual(self.calls_for('lms'), [])
+                    self.assertFalse(self.record_path.exists())
+                self.assertFalse((self.directory / 'opencode-qwen3.8-27b.lock').exists())
+
+    def test_local_cleanup_after_model_acquisition(self) -> None:
+        self.prepare_bureaucrat()
+        self.environment['TEST_LOCAL_ALLOWED'] = '1'
+        loaded = Path(self.environment['TEST_LOCAL_LOADED'])
+        for command in ['launch-coder.command', 'launch-bureaucrat.command']:
+            for preloaded in [False, True]:
+                for client_exit in [0, 23]:
+                    with self.subTest(command=command, preloaded=preloaded, client_exit=client_exit):
+                        self.environment['TEST_OPENCODE_EXIT'] = str(client_exit)
+                        if preloaded:
+                            loaded.write_text('loaded')
+                        self.calls.unlink(missing_ok=True)
+                        result = self.invoke(str(self.target), command=command)
+                        self.assertEqual(result.returncode, client_exit, result.stderr)
+                        operations = [call['arguments'][0] for call in self.calls_for('lms')]
+                        self.assertEqual(operations.count('load'), 0 if preloaded else 1)
+                        self.assertEqual(operations.count('unload'), 1)
+                        self.assertFalse(loaded.exists())
+                        self.assertFalse((self.directory / 'opencode-qwen3.8-27b.lock').exists())
 
     def test_current_opencode_version_launches(self) -> None:
         self.environment["TEST_LOCAL_ALLOWED"] = "1"

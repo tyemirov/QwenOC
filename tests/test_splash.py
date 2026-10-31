@@ -74,6 +74,20 @@ class TestSplash:
             script.write(f'splash() {{ exec "{sys.executable}" "{Path(__file__).resolve()}" --serve "$@"; }}\nexport -f splash\n')
         self.harness.environment['TEST_SPLASH_LIFECYCLE'] = str(self.harness.directory / 'lifecycle')
 
+    @pytest.mark.parametrize('memory,model', [(48, MODEL), (64, Q8_MODEL)])
+    @pytest.mark.parametrize('invocation', ['--standalone /tmp/project', '--model {model} /tmp/project',
+                                            '--model {model}#low /tmp/project'])
+    def test_existing_session_blocks_splash_startup(self, memory: int, model: str, invocation: str) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = str(memory)
+        self.harness.environment['TEST_PROCESS_COMMAND'] = 'opencode ' + invocation.format(model='splash/' + model)
+        result = self.harness.invoke('--backend=splash', str(self.harness.target))
+        assert result.returncode == 7, result.stderr
+        assert 'already has an OpenCode session' in result.stderr
+        assert 'unbound variable' not in result.stderr
+        assert not self.harness.record_path.exists()
+        assert not Path(self.harness.environment['TEST_SPLASH_LIFECYCLE']).exists()
+        assert not (self.harness.directory / 'opencode-qwen3.8-27b.lock').exists()
+
     @pytest.mark.parametrize('memory', [64, 96])
     @pytest.mark.parametrize('command', ['launch-coder.command', 'launch-opencode.command', 'install.command', 'doctor.command'])
     def test_q8_selected_on_large_hosts(self, memory: int, command: str) -> None:
