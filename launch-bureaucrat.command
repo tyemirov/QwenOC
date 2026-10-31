@@ -100,6 +100,7 @@ if [[ -z "$REAUTHORIZE_TARGET" ]]; then
     printf 'OpenCode was not found in PATH.\n' >&2
     exit 3
   fi
+  require_opencode_version
 fi
 if ! command -v jq >/dev/null 2>&1; then
   printf 'jq is required to validate OAuth keys and LM Studio model state.\n' >&2
@@ -382,7 +383,5 @@ configure_opencode_environment "bureaucrat"
 printf 'Launching [Qwen The Bureaucrat] in %s with %s (%s GiB detected).\n' \
   "$WORKSPACE_DIR" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$WORKSPACE_DIR"
-"$OPENCODE_BIN" "$WORKSPACE_DIR" \
-  --model "lmstudio/qwen3.8-27b" \
-  --agent "qwen-bureaucrat" \
+"$OPENCODE_BIN" --standalone "$WORKSPACE_DIR" \
   "$@"
