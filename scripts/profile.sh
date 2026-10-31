@@ -8,8 +8,9 @@ INFERENCE_BACKEND="local"
 MODEL_BASE_KEY="qwen/qwen3.8-27b"
 MODEL_FORMAT="gguf"
 MIN_SUPPORTED_MEMORY_GIB="32"
-MIN_OPENCODE_VERSION="1.18.17"
-TESTED_OPENCODE_VERSION="1.18.17"
+MIN_OPENCODE_VERSION="2.2.5"
+OPENCODE_FORMULA="anomalyco/tap/opencode-v2"
+TESTED_OPENCODE_VERSION="2.2.5"
 TESTED_LM_STUDIO_VERSION="0.4.21+2"
 TESTED_LLAMA_RUNTIME_VERSION="2.28.2"
 LMSTUDIO_URL="http://127.0.0.1:1234"
@@ -65,7 +66,7 @@ select_model_profile_for_memory() {
     MODEL_ID \
     CONTEXT_LENGTH \
     OUTPUT_LIMIT \
-    COMPACTION_RESERVED \
+    COMPACTION_BUFFER \
     MODEL_DOWNLOAD_MIN_FREE_GIB \
     MODEL_SIZE_GIB <<<"$profile_row"
 
@@ -131,8 +132,8 @@ version_at_least() {
   local required="$2"
   awk -v actual="$actual" -v required="$required" '
     BEGIN {
-      sub(/[^0-9.].*$/, "", actual)
-      sub(/[^0-9.].*$/, "", required)
+      sub(/^opencode v/, "", actual)
+      if (actual !~ /^[0-9]+([.][0-9]+)*$/ || required !~ /^[0-9]+([.][0-9]+)*$/) exit 1
       actual_count = split(actual, actual_parts, ".")
       required_count = split(required, required_parts, ".")
       count = actual_count > required_count ? actual_count : required_count
@@ -145,6 +146,18 @@ version_at_least() {
       exit 0
     }
   '
+}
+
+require_opencode_version() {
+  local version
+  if ! version="$("$OPENCODE_BIN" --version 2>/dev/null | tail -1)"; then
+    printf 'Could not read the OpenCode version: %s.\n' "$OPENCODE_BIN" >&2
+    return 3
+  fi
+  if ! version_at_least "$version" "$MIN_OPENCODE_VERSION"; then
+    printf 'OpenCode %s or newer is required; detected %s.\n' "$MIN_OPENCODE_VERSION" "$version" >&2
+    return 3
+  fi
 }
 
 chrome_version() {
@@ -261,25 +274,29 @@ role_opencode_config_content() {
       --arg google_drive_scopes "$GOOGLE_DRIVE_MCP_SCOPES_REQUIRED" \
       --argjson context "$CONTEXT_LENGTH" \
       --argjson output "$OUTPUT_LIMIT" \
-      --argjson reserved "$COMPACTION_RESERVED" \
+      --argjson buffer "$COMPACTION_BUFFER" \
       '
+        .policies = [{action: "provider.use", resource: "*", effect: "deny"},
+                     {action: "provider.use", resource: "lmstudio", effect: "allow"}] |
         .default_agent = "qwen-bureaucrat" |
-        .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
-        .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
-        .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
-        .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
-        .compaction.reserved = $reserved |
-        .agent = {
-          "qwen-bureaucrat": (.agent["qwen-bureaucrat"] + {prompt: ("{file:" + $profile_root + "/prompts/qwen-bureaucrat.txt}")})
+        .providers.lmstudio.models["qwen3.8-27b"].modelID = $model_id |
+        .providers.lmstudio.models["qwen3.8-27b"].name = $model_name |
+        .providers.lmstudio.models["qwen3.8-27b"].limit.context = $context |
+        .providers.lmstudio.models["qwen3.8-27b"].limit.output = $output |
+        .compaction.buffer = $buffer |
+        .agents = {
+          "qwen-bureaucrat": (.agents["qwen-bureaucrat"] + {system: ("{file:" + $profile_root + "/prompts/qwen-bureaucrat.txt}")}),
+          "title": .agents.title, "compaction": .agents.compaction
         } |
-        .mcp = {
+        .mcp.servers = {
           "gmail": {
             "type": "local",
             "command": [
               "node",
               ($profile_root + "/scripts/mcp-gmail.mjs")
             ],
-            "enabled": true
+            "disabled": false,
+            "codemode": false
           },
           "google_drive": {
             "type": "local",
@@ -290,7 +307,8 @@ role_opencode_config_content() {
             "environment": {
               "GOOGLE_DRIVE_MCP_SCOPES": $google_drive_scopes
             },
-            "enabled": true
+            "disabled": false,
+            "codemode": false
           },
           "chrome": {
             "type": "local",
@@ -301,11 +319,12 @@ role_opencode_config_content() {
               "--autoConnect",
               "--slim"
             ],
-            "enabled": true
+            "disabled": false,
+            "codemode": false
           }
         } |
-        .plugin = [
-          ("file://" + $profile_root + "/.opencode-bureaucrat/plugins/qwen-bureaucrat.ts")
+        .plugins = [
+          ($profile_root + "/plugins/bureaucrat")
         ]
       ' "$PROFILE_ROOT/configs/bureaucrat.jsonc"
   else
@@ -315,23 +334,26 @@ role_opencode_config_content() {
       --arg model_name "$MODEL_DISPLAY_NAME" \
       --argjson context "$CONTEXT_LENGTH" \
       --argjson output "$OUTPUT_LIMIT" \
-      --argjson reserved "$COMPACTION_RESERVED" \
+      --argjson buffer "$COMPACTION_BUFFER" \
       '
-        .provider.lmstudio.models["qwen3.8-27b"].id = $model_id |
-        .provider.lmstudio.models["qwen3.8-27b"].name = $model_name |
-        .provider.lmstudio.models["qwen3.8-27b"].limit.context = $context |
-        .provider.lmstudio.models["qwen3.8-27b"].limit.output = $output |
-        .compaction.reserved = $reserved |
+        .providers.lmstudio.models["qwen3.8-27b"].modelID = $model_id |
+        .providers.lmstudio.models["qwen3.8-27b"].name = $model_name |
+        .providers.lmstudio.models["qwen3.8-27b"].limit.context = $context |
+        .providers.lmstudio.models["qwen3.8-27b"].limit.output = $output |
+        .compaction.buffer = $buffer |
+        .policies = [{action: "provider.use", resource: "*", effect: "deny"},
+                     {action: "provider.use", resource: "lmstudio", effect: "allow"}] |
         .default_agent = "qwen-local" |
-        .agent = {
-          "qwen-local": (.agent["qwen-local"] + {prompt: ("{file:" + $profile_root + "/prompts/qwen-local.txt}")})
+        .agents = {
+          "qwen-local": (.agents["qwen-local"] + {system: ("{file:" + $profile_root + "/prompts/qwen-local.txt}")}),
+          "title": .agents.title, "compaction": .agents.compaction
         } |
-        .mcp = {
-          "context7": .mcp.context7,
-          "gh_grep": .mcp.gh_grep
+        .mcp.servers = {
+          "context7": .mcp.servers.context7,
+          "gh_grep": .mcp.servers.gh_grep
         } |
-        .plugin = [
-          ("file://" + $profile_root + "/.opencode-coder/plugins/qwen-local.ts")
+        .plugins = [
+          ($profile_root + "/plugins/coder")
         ]
       ' "$PROFILE_ROOT/configs/coder.jsonc"
   fi
@@ -357,17 +379,17 @@ configure_opencode_environment() {
   fi
   export OPENCODE_CONFIG_CONTENT
   OPENCODE_CONFIG_CONTENT="$(runtime_opencode_config_content "$role")" || return
-  if [[ "$role" == "coder" ]]; then
-    export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
-  else
-    unset OPENCODE_EXPERIMENTAL_LSP_TOOL 2>/dev/null || true
-  fi
-  export OPENCODE_ENABLE_EXA=true
   export OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true
-  export QWENOC_OUTPUT_LIMIT="$OUTPUT_LIMIT"
-  export QWENOC_PROFILE_TIER="$PROFILE_TIER"
-  export QWENOC_ROLE="$role"
-  export QWENOC_BACKEND="$INFERENCE_BACKEND"
+}
+
+resolved_opencode_config() {
+  "$OPENCODE_BIN" debug config --standalone | jq -e '
+    def selection:
+      .providerID + "/" + .model + (if .variant then "#" + .variant else "" end);
+    reduce (.[] | select(.type == "document") | .info) as $info ({}; . * $info) |
+    .model |= selection |
+    .agents |= with_entries(if .value.model then .value.model |= selection else . end)
+  '
 }
 
 model_is_installed() {

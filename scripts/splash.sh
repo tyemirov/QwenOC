@@ -81,7 +81,7 @@ initialize_splash_profile() {
   # Offline diagnostics use a bounded profile; launch always reads the live limit.
   CONTEXT_LENGTH=32768
   OUTPUT_LIMIT=8192
-  COMPACTION_RESERVED="$OUTPUT_LIMIT"
+  COMPACTION_BUFFER="$OUTPUT_LIMIT"
 }
 
 splash_api() {
@@ -122,31 +122,34 @@ read_splash_runtime() {
   CONTEXT_LENGTH="$context"
   OUTPUT_LIMIT=$((CONTEXT_LENGTH / 4))
   (( OUTPUT_LIMIT <= 32768 )) || OUTPUT_LIMIT=32768
-  COMPACTION_RESERVED="$OUTPUT_LIMIT"
+  COMPACTION_BUFFER="$OUTPUT_LIMIT"
 }
 
 splash_config_content() {
   jq -c --arg model "$MODEL_ID" --arg selection "$OPENCODE_MODEL" \
     --arg name "$MODEL_DISPLAY_NAME" --arg endpoint "$SPLASH_URL/v1" \
     --argjson context "$CONTEXT_LENGTH" --argjson output "$OUTPUT_LIMIT" '
-    .enabled_providers = ["splash"] |
-    .disabled_providers = ((.disabled_providers // []) | map(select(. != "splash"))) |
-    .model = $selection | .small_model = $selection |
-    .agent |= with_entries(.value.model = $selection) |
-    .provider = {splash: {
-      npm: "@ai-sdk/openai-compatible", name: "Splash",
-      options: {baseURL: $endpoint, apiKey: "{env:SPLASH_API_KEY}", timeout: 1800000},
+    .policies = [
+      {action: "provider.use", resource: "*", effect: "deny"},
+      {action: "provider.use", resource: "splash", effect: "allow"}
+    ] |
+    .model = $selection |
+    .agents |= with_entries(.value.model = ($selection + (if .key == "qwen-bureaucrat" then "#low" else "#medium" end))) |
+    .providers = {splash: {
+      package: "@opencode/ai/providers/openai-compatible", name: "Splash",
+      settings: {baseURL: $endpoint, apiKey: "{env:SPLASH_API_KEY}", timeout: 1800000},
       models: {($model): {
-        id: $model, name: $name, attachment: true, reasoning: true, tool_call: true,
-        interleaved: {field: "reasoning_content"},
-        modalities: {input: ["text", "image", "pdf"], output: ["text"]},
+        modelID: $model, name: $name,
+        capabilities: {tools: true, input: ["text", "image", "pdf"], output: ["text"]},
+        compatibility: {reasoningField: "reasoning_content", maxTokensField: "max_tokens"},
         limit: {context: $context, input: ($context - $output), output: $output},
-        options: {reasoningEffort: "medium"},
-        variants: {none: {reasoningEffort: "none"}, low: {reasoningEffort: "low"},
-                   medium: {reasoningEffort: "medium"}, xhigh: {reasoningEffort: "xhigh"}}
+        body: {reasoning_effort: "medium", top_k: 20,
+               temperature: .providers.lmstudio.models["qwen3.8-27b"].body.temperature,
+               top_p: .providers.lmstudio.models["qwen3.8-27b"].body.top_p},
+        variants: ["none", "low", "medium", "xhigh"] | map({id: ., body: {reasoning_effort: .}})
       }}
     }} |
-    .compaction.reserved = $output
+    .compaction.buffer = $output
   '
 }
 
@@ -227,5 +230,5 @@ launch_splash_opencode() {
   if [[ "$role" == "bureaucrat" ]]; then agent=qwen-bureaucrat; else agent=qwen-local; fi
   printf 'Launching %s with %s (%s-token context).\n' "$agent" "$MODEL_DISPLAY_NAME" "$CONTEXT_LENGTH"
   cd "$project" || return
-  "$OPENCODE_BIN" "$project" --model "$OPENCODE_MODEL" --agent "$agent" "$@"
+  "$OPENCODE_BIN" --standalone "$project" "$@"
 }
