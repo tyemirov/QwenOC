@@ -130,20 +130,20 @@ if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
   if (( FAILURES == 0 )); then
     for role in coder bureaucrat; do
       configure_opencode_environment "$role" || exit $?
-      if RESOLVED_CONFIG="$(cd "$PROJECT_DIR" && "$OPENCODE_BIN" debug config)" &&
+      if [[ "$role" == "bureaucrat" ]]; then VARIANT=low; else VARIANT=medium; fi
+      if RESOLVED_CONFIG="$(cd "$PROJECT_DIR" && resolved_opencode_config)" &&
         jq -e --arg model "$OPENCODE_MODEL" --arg id "$MODEL_ID" \
-          --arg url "$SPLASH_URL/v1" --argjson context "$CONTEXT_LENGTH" \
+          --arg url "$SPLASH_URL/v1" --arg variant "$VARIANT" --argjson context "$CONTEXT_LENGTH" \
           --argjson output "$OUTPUT_LIMIT" '
-          .model == $model and .small_model == $model and
-          .enabled_providers == ["splash"] and
-          ((.disabled_providers // []) | index("splash")) == null and
-          .agent[.default_agent].model == $model and
-          .provider.splash.npm == "@ai-sdk/openai-compatible" and
-          .provider.splash.options.baseURL == $url and
-          .provider.splash.models[$id].limit.context == $context and
-          .provider.splash.models[$id].limit.output == $output and
-          .provider.splash.models[$id].options.reasoningEffort == "medium" and
-          .compaction.reserved == $output
+          .model == $model and
+          .policies[-1] == {action: "provider.use", resource: "splash", effect: "allow"} and
+          .agents[.default_agent].model == ($model + "#" + $variant) and
+          .providers.splash.package == "@opencode/ai/providers/openai-compatible" and
+          .providers.splash.settings.baseURL == $url and
+          .providers.splash.models[$id].limit.context == $context and
+          .providers.splash.models[$id].limit.output == $output and
+          .providers.splash.models[$id].body.reasoning_effort == "medium" and
+          .compaction.buffer == $output
         ' <<<"$RESOLVED_CONFIG" >/dev/null; then
         pass "Resolved Splash $role configuration"
       else
@@ -290,30 +290,27 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
       OPENCODE_CONFIG="$PROFILE_DIR/configs/coder.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
       OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
-      OPENCODE_EXPERIMENTAL_LSP_TOOL=true \
-      OPENCODE_ENABLE_EXA=true \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
-      "$OPENCODE_BIN" debug config 2>/dev/null
+      resolved_opencode_config 2>/dev/null
   )"
   if jq -e \
     --arg model_id "$MODEL_ID" \
     --argjson context "$CONTEXT_LENGTH" \
     --argjson output "$OUTPUT_LIMIT" \
-    --argjson reserved "$COMPACTION_RESERVED" \
+    --argjson buffer "$COMPACTION_BUFFER" \
     '.model == "lmstudio/qwen3.8-27b" and
      .default_agent == "qwen-local" and
-     .provider.lmstudio.models["qwen3.8-27b"].id == $model_id and
-     .provider.lmstudio.models["qwen3.8-27b"].limit.context == $context and
-     .provider.lmstudio.models["qwen3.8-27b"].limit.output == $output and
-     .provider.lmstudio.options.timeout == 1800000 and
-     (.provider.lmstudio.options | has("chunkTimeout") | not) and
-     .agent["qwen-local"].variant == "medium" and
+     .providers.lmstudio.models["qwen3.8-27b"].modelID == $model_id and
+     .providers.lmstudio.models["qwen3.8-27b"].limit.context == $context and
+     .providers.lmstudio.models["qwen3.8-27b"].limit.output == $output and
+     .providers.lmstudio.settings.timeout == 1800000 and
+     (.providers.lmstudio.settings | has("chunkTimeout") | not) and
+     .agents["qwen-local"].model == "lmstudio/qwen3.8-27b#medium" and
      .compaction.auto == true and
-     .compaction.prune == true and
-     .compaction.reserved == $reserved and
-     .mcp.context7.enabled == true and
-     .mcp.gh_grep.enabled == true and
-     (.mcp | has("google_workspace") | not)' \
+     .compaction.buffer == $buffer and
+     .mcp.servers.context7.disabled == false and
+     .mcp.servers.gh_grep.disabled == false and
+     (.mcp.servers | has("google_workspace") | not)' \
     <<<"$RESOLVED_CODER_CONFIG" >/dev/null 2>&1; then
     pass "Resolved Coder profile preserves dedicated coding MCPs (context7, gh_grep)"
   else
@@ -327,38 +324,32 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
       OPENCODE_CONFIG="$PROFILE_DIR/configs/bureaucrat.jsonc" \
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
       OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
-      OPENCODE_ENABLE_EXA=true \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
-      "$OPENCODE_BIN" debug config 2>/dev/null
+      resolved_opencode_config 2>/dev/null
   )"
   if jq -e \
     --arg model_id "$MODEL_ID" \
     --argjson context "$CONTEXT_LENGTH" \
     --argjson output "$OUTPUT_LIMIT" \
-    --argjson reserved "$COMPACTION_RESERVED" \
+    --argjson buffer "$COMPACTION_BUFFER" \
     '.model == "lmstudio/qwen3.8-27b" and
      .default_agent == "qwen-bureaucrat" and
-     .provider.lmstudio.models["qwen3.8-27b"].id == $model_id and
-     .provider.lmstudio.models["qwen3.8-27b"].limit.context == $context and
-     .provider.lmstudio.models["qwen3.8-27b"].limit.output == $output and
-     .agent["qwen-bureaucrat"].variant == "low" and
+     .providers.lmstudio.models["qwen3.8-27b"].modelID == $model_id and
+     .providers.lmstudio.models["qwen3.8-27b"].limit.context == $context and
+     .providers.lmstudio.models["qwen3.8-27b"].limit.output == $output and
+     .agents["qwen-bureaucrat"].model == "lmstudio/qwen3.8-27b#low" and
      .compaction.auto == true and
-     .compaction.prune == true and
-     .compaction.reserved == $reserved and
-     .mcp.gmail.enabled == true and
-     .mcp.google_drive.enabled == true and
-     .mcp.google_drive.environment.GOOGLE_DRIVE_MCP_SCOPES == "drive,documents,spreadsheets" and
-     .mcp.chrome.enabled == true and
-     (.mcp.chrome.command | index("--browserUrl")) == null and
-     (.mcp.chrome.command | index("--autoConnect")) != null and
-     .agent["qwen-bureaucrat"].tools.gmail_send_draft == true and
-     .agent["qwen-bureaucrat"].tools.gmail_delete_draft == true and
-     .agent["qwen-bureaucrat"].tools.google_drive_authGetStatus == true and
-     .agent["qwen-bureaucrat"].tools.google_drive_manage_accounts == true and
-     .agent["qwen-bureaucrat"].permission.gmail_download_attachment == "deny" and
-     .agent["qwen-bureaucrat"].permission["gmail_send_*"] == "ask" and
-     .agent["qwen-bureaucrat"].permission["gmail_delete_*"] == "ask" and
-     .agent["qwen-bureaucrat"].permission["google_drive_delete_*"] == "ask"' \
+     .compaction.buffer == $buffer and
+     .mcp.servers.gmail.disabled == false and
+     .mcp.servers.google_drive.disabled == false and
+     .mcp.servers.google_drive.environment.GOOGLE_DRIVE_MCP_SCOPES == "drive,documents,spreadsheets" and
+     .mcp.servers.chrome.disabled == false and
+     (.mcp.servers.chrome.command | index("--browserUrl")) == null and
+     (.mcp.servers.chrome.command | index("--autoConnect")) != null and
+     (.agents["qwen-bureaucrat"].permissions | any(.action == "gmail_download_attachment" and .effect == "deny")) and
+     (.agents["qwen-bureaucrat"].permissions | any(.action == "gmail_send_*" and .effect == "ask")) and
+     (.agents["qwen-bureaucrat"].permissions | any(.action == "gmail_delete_*" and .effect == "ask")) and
+     (.agents["qwen-bureaucrat"].permissions | any(.action == "google_drive_delete_*" and .effect == "ask"))' \
     <<<"$RESOLVED_BUREAUCRAT_CONFIG" >/dev/null 2>&1; then
     pass "Resolved Bureaucrat profile preserves dedicated office MCPs (gmail, google_drive, chrome)"
   else
@@ -390,7 +381,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-coder" \
       OPENCODE_CONFIG_CONTENT="$CODER_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
-      "$OPENCODE_BIN" mcp list 2>/dev/null
+      "$OPENCODE_BIN" mcp list --standalone 2>/dev/null
   )"
   CODER_MCP_PLAIN="$(printf '%s\n' "$CODER_MCP_OUTPUT" | sed $'s/\033\\[[0-9;]*m//g')"
   if mcp_server_is_connected context7 "$CODER_MCP_PLAIN" && \
@@ -407,7 +398,7 @@ if command -v jq >/dev/null 2>&1 && [[ -n "$OPENCODE_BIN" && -d "$PROJECT_DIR" ]
       OPENCODE_CONFIG_DIR="$PROFILE_DIR/.opencode-bureaucrat" \
       OPENCODE_CONFIG_CONTENT="$BUREAUCRAT_CONFIG_CONTENT" \
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true \
-      "$OPENCODE_BIN" mcp list 2>/dev/null
+      "$OPENCODE_BIN" mcp list --standalone 2>/dev/null
   )"
   BUREAUCRAT_MCP_PLAIN="$(printf '%s\n' "$BUREAUCRAT_MCP_OUTPUT" | sed $'s/\033\\[[0-9;]*m//g')"
   if mcp_server_is_connected gmail "$BUREAUCRAT_MCP_PLAIN" && \
