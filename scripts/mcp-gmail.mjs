@@ -7,6 +7,7 @@
 
 import { spawn } from "child_process";
 import readline from "readline";
+import { sanitizeGrammarSchema } from "./grammar-schema.mjs";
 
 const UPSTREAM_PKG = "@artymclabin/gmail-mcp";
 
@@ -34,24 +35,12 @@ const ALLOWED_TOOLS = new Set([
 ]);
 
 function sanitizeSchema(schema) {
-  if (!schema || typeof schema !== "object") return schema;
-  if (Array.isArray(schema)) return schema.map(sanitizeSchema);
-
-  const sanitized = {};
-  for (const [k, v] of Object.entries(schema)) {
-    // Strip non-standard regex and constraints that crash llama.cpp grammar compiler
-    if (k === "pattern" || k === "$schema" || k === "additionalProperties") {
-      continue;
+  return sanitizeGrammarSchema(schema, (sanitized) => {
+    if (sanitized.type === "object" && (!sanitized.properties || Object.keys(sanitized.properties).length === 0)) {
+      sanitized.properties = { _placeholder: { type: "string", description: "Optional parameter" } };
     }
-    sanitized[k] = sanitizeSchema(v);
-  }
-
-  // Ensure object types have valid properties
-  if (sanitized.type === "object" && (!sanitized.properties || Object.keys(sanitized.properties).length === 0)) {
-    sanitized.properties = { _placeholder: { type: "string", description: "Optional parameter" } };
-  }
-
-  return sanitized;
+    return sanitized;
+  });
 }
 
 const child = spawn("npx", ["-y", UPSTREAM_PKG], {

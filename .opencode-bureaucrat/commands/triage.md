@@ -1,7 +1,7 @@
 ---
 description: Triage unread emails and categorize pending actions
 agent: qwen-bureaucrat
-subtask: false
+subagent: false
 ---
 
 Search Gmail for recent unread or high-priority threads. Group them into three clear categories:

@@ -100,6 +100,7 @@ if [[ -z "$REAUTHORIZE_TARGET" ]]; then
     printf 'OpenCode was not found in PATH.\n' >&2
     exit 3
   fi
+  require_opencode_version
 fi
 if ! command -v jq >/dev/null 2>&1; then
   printf 'jq is required to validate OAuth keys and LM Studio model state.\n' >&2
@@ -289,13 +290,16 @@ if ! acquire_session_lock; then
   exit 7
 fi
 STARTED_SERVER=0
+MODEL_ACQUIRED=0
 cleanup() {
   release_session_lock
   local active_sessions
   active_sessions="$(active_opencode_session_pids || true)"
   if [[ -z "$active_sessions" ]]; then
-    printf '\nSession finished. Unloading model to free system memory...\n' >&2
-    "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    if [[ "$MODEL_ACQUIRED" -eq 1 ]]; then
+      printf '\nSession finished. Unloading model to free system memory...\n' >&2
+      "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    fi
     if [[ "$STARTED_SERVER" -eq 1 ]]; then
       printf 'Stopping LM Studio server...\n' >&2
       "$LMS_BIN" server stop >/dev/null 2>&1 || true
@@ -361,6 +365,7 @@ if [[ -z "$CURRENT_CONTEXT" ]]; then
     --speculative-draft-mtp \
     --yes
 fi
+MODEL_ACQUIRED=1
 
 MODEL_READY=0
 for _attempt in {1..30}; do
@@ -382,7 +387,5 @@ configure_opencode_environment "bureaucrat"
 printf 'Launching [Qwen The Bureaucrat] in %s with %s (%s GiB detected).\n' \
   "$WORKSPACE_DIR" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$WORKSPACE_DIR"
-"$OPENCODE_BIN" "$WORKSPACE_DIR" \
-  --model "lmstudio/qwen3.8-27b" \
-  --agent "qwen-bureaucrat" \
+"$OPENCODE_BIN" --standalone "$WORKSPACE_DIR" \
   "$@"

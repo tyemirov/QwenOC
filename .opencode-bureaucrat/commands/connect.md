@@ -1,7 +1,7 @@
 ---
 description: Check or request Google Workspace account connection status
 agent: qwen-bureaucrat
-subtask: false
+subagent: false
 ---
 
 Call `google_drive_manage_accounts` with `action: "list"`, then call

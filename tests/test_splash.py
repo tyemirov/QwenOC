@@ -74,6 +74,20 @@ class TestSplash:
             script.write(f'splash() {{ exec "{sys.executable}" "{Path(__file__).resolve()}" --serve "$@"; }}\nexport -f splash\n')
         self.harness.environment['TEST_SPLASH_LIFECYCLE'] = str(self.harness.directory / 'lifecycle')
 
+    @pytest.mark.parametrize('memory,model', [(48, MODEL), (64, Q8_MODEL)])
+    @pytest.mark.parametrize('invocation', ['--standalone /tmp/project', '--model {model} /tmp/project',
+                                            '--model {model}#low /tmp/project'])
+    def test_existing_session_blocks_splash_startup(self, memory: int, model: str, invocation: str) -> None:
+        self.harness.environment['TEST_MEMORY_GIB'] = str(memory)
+        self.harness.environment['TEST_PROCESS_COMMAND'] = 'opencode ' + invocation.format(model='splash/' + model)
+        result = self.harness.invoke('--backend=splash', str(self.harness.target))
+        assert result.returncode == 7, result.stderr
+        assert 'already has an OpenCode session' in result.stderr
+        assert 'unbound variable' not in result.stderr
+        assert not self.harness.record_path.exists()
+        assert not Path(self.harness.environment['TEST_SPLASH_LIFECYCLE']).exists()
+        assert not (self.harness.directory / 'opencode-qwen3.8-27b.lock').exists()
+
     @pytest.mark.parametrize('memory', [64, 96])
     @pytest.mark.parametrize('command', ['launch-coder.command', 'launch-opencode.command', 'install.command', 'doctor.command'])
     def test_q8_selected_on_large_hosts(self, memory: int, command: str) -> None:
@@ -83,11 +97,11 @@ class TestSplash:
         result = self.harness.invoke('--backend=splash', *arguments, command=command)
         assert result.returncode == 0, result.stderr
         config = self.harness.record()['config']
-        assert config['model'] == config['small_model'] == 'splash/' + Q8_MODEL
-        model = config['provider']['splash']['models'][Q8_MODEL]
+        assert config['model'] == 'splash/' + Q8_MODEL
+        model = config['providers']['splash']['models'][Q8_MODEL]
         assert 'Q8_0' in model['name']
         assert model['limit']['context'] == self.server.context
-        assert all(agent['model'] == 'splash/' + Q8_MODEL for agent in config['agent'].values())
+        assert all(agent['model'].startswith('splash/' + Q8_MODEL + '#') for agent in config['agents'].values())
 
     def test_q8_rejects_existing_four_bit_server(self) -> None:
         self.harness.environment['TEST_MEMORY_GIB'] = '64'
@@ -149,18 +163,19 @@ class TestSplash:
         assert result.returncode == 0, result.stderr
         record = self.harness.record()
         config = record['config']
-        assert config['model'] == config['small_model'] == 'splash/' + MODEL
-        assert config['enabled_providers'] == ['splash']
-        assert list(config['provider']) == ['splash']
-        provider = config['provider']['splash']
-        assert provider['options']['baseURL'] == 'http://127.0.0.1:8000/v1'
+        assert config['model'] == 'splash/' + MODEL
+        assert config['policies'][-1] == {'action': 'provider.use', 'resource': 'splash', 'effect': 'allow'}
+        assert list(config['providers']) == ['splash']
+        provider = config['providers']['splash']
+        assert provider['settings']['baseURL'] == 'http://127.0.0.1:8000/v1'
         model = provider['models'][MODEL]
         assert model['limit'] == {'context': 65536, 'input': 49152, 'output': 16384}
-        assert model['variants']['xhigh'] == {'reasoningEffort': 'xhigh'}
-        assert model['options'] == {'reasoningEffort': 'medium'}
-        assert config['agent']['qwen-local']['model'] == 'splash/' + MODEL
-        assert config['compaction']['reserved'] == 16384
-        assert record['arguments'][1:5] == ['--model', 'splash/' + MODEL, '--agent', 'qwen-local']
+        assert next(v for v in model['variants'] if v['id'] == 'xhigh') == {'id': 'xhigh', 'body': {'reasoning_effort': 'xhigh'}}
+        assert model['body'] == {'reasoning_effort': 'medium', 'temperature': 1.0, 'top_p': 0.95, 'top_k': 20}
+        assert config['agents']['qwen-local']['model'] == 'splash/' + MODEL + '#medium'
+        assert config['compaction']['buffer'] == 16384
+        assert record['arguments'][0] == '--standalone'
+        assert Path(record['arguments'][1]).resolve() == self.harness.target.resolve()
         assert not self.harness.calls_for('lms')
         assert not Path(self.harness.environment['TEST_SPLASH_LIFECYCLE']).exists()
 
@@ -183,7 +198,7 @@ class TestSplash:
         result = self.harness.invoke('--backend=splash', str(self.harness.target))
         assert result.returncode == 0, result.stderr
         assert 'splash-test-key' not in result.stdout + result.stderr
-        assert self.harness.record()['config']['provider']['splash']['options']['apiKey'] == '{env:SPLASH_API_KEY}'
+        assert self.harness.record()['config']['providers']['splash']['settings']['apiKey'] == '{env:SPLASH_API_KEY}'
 
     def test_wrong_api_key_does_not_start_another_server(self):
         self.server.api_key = 'required-key'
@@ -288,8 +303,8 @@ class TestSplash:
         assert result.returncode == 0, result.stderr
         config = self.harness.record()['config']
         assert config['default_agent'] == 'qwen-bureaucrat'
-        assert config['agent']['qwen-bureaucrat']['model'] == 'splash/' + expected_model
-        assert set(config['mcp']) == {'gmail', 'google_drive', 'chrome'}
+        assert config['agents']['qwen-bureaucrat']['model'] == 'splash/' + expected_model + '#low'
+        assert set(config['mcp']['servers']) == {'gmail', 'google_drive', 'chrome'}
         assert not self.harness.calls_for('lms')
 
     def simulate_missing_splash(self) -> Path:

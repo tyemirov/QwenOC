@@ -1,7 +1,7 @@
 ---
 description: Finish the current goal with verification
 agent: qwen-local
-subtask: false
+subagent: false
 ---
 
 Treat the current conversation request as a completion contract. Incorporate this additional acceptance criterion when supplied: $ARGUMENTS

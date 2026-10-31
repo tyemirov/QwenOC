@@ -93,11 +93,7 @@ if ! command -v jq >/dev/null 2>&1; then
   printf 'jq is required to prepare the OpenCode configuration.\n' >&2
   exit 3
 fi
-OPENCODE_VERSION="$("$OPENCODE_BIN" --version 2>/dev/null | tail -1)"
-if ! version_at_least "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
-  printf 'OpenCode %s or newer is required; detected %s.\n' "$MIN_OPENCODE_VERSION" "$OPENCODE_VERSION" >&2
-  exit 3
-fi
+require_opencode_version
 
 if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
   launch_splash_opencode coder "$PROJECT_DIR" "$@"
@@ -122,13 +118,16 @@ if ! acquire_session_lock; then
   exit 7
 fi
 STARTED_SERVER=0
+MODEL_ACQUIRED=0
 cleanup() {
   release_session_lock
   local active_sessions
   active_sessions="$(active_opencode_session_pids || true)"
   if [[ -z "$active_sessions" ]]; then
-    printf '\nSession finished. Unloading model to free system memory...\n' >&2
-    "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    if [[ "$MODEL_ACQUIRED" -eq 1 ]]; then
+      printf '\nSession finished. Unloading model to free system memory...\n' >&2
+      "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    fi
     if [[ "$STARTED_SERVER" -eq 1 ]]; then
       printf 'Stopping LM Studio server...\n' >&2
       "$LMS_BIN" server stop >/dev/null 2>&1 || true
@@ -194,6 +193,7 @@ if [[ -z "$CURRENT_CONTEXT" ]]; then
     --speculative-draft-mtp \
     --yes
 fi
+MODEL_ACQUIRED=1
 
 MODEL_READY=0
 for _attempt in {1..30}; do
@@ -215,7 +215,5 @@ configure_opencode_environment "coder"
 printf 'Launching [Qwen The Coder] in %s with %s (%s GiB detected).\n' \
   "$PROJECT_DIR" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$PROJECT_DIR"
-"$OPENCODE_BIN" "$PROJECT_DIR" \
-  --model "$OPENCODE_MODEL" \
-  --agent "qwen-local" \
+"$OPENCODE_BIN" --standalone "$PROJECT_DIR" \
   "$@"

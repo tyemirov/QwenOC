@@ -1,0 +1,11 @@
+{
+  "name": "qwenoc-coder",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./index.ts"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.2.5"
+  }
+}

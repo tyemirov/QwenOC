@@ -95,11 +95,28 @@ Give each term one meaning. Use the same term for the same concept in all docume
 
 Add repository-specific technical nouns below this line.
 
+- `command`: An instruction that a shell executes.
+- `conversation`: One OpenCode session and its saved content.
+- `deleting session`: The session that runs the procedure.
 - `DFlash 2`: The draft model system that Splash uses for speculative decoding.
+- `fragment`: One part of a divided value.
+- `history`: A file that stores the commands a person enters in a terminal.
+- `line`: One unit of content in a file that ends at a line break.
+- `log`: A file that a program writes to as it works.
+- `model`: A program that creates content from input.
 - `model package`: The weights, tokenizer, and metadata that an inference runtime loads.
 - `quantization`: The numerical representation of model weights at a specified precision.
 - `reasoning effort`: The model setting that controls the extent of reasoning before an answer.
+- `session`: One conversation in the OpenCode database.
+- `session ID`: A code that identifies one session.
+- `server`: A running LM Studio process that handles model requests.
+- `server log`: The LM Studio file that stores model request content.
+- `shell`: A program that executes commands.
+- `snapshot`: A saved copy of file content at a point in time.
 - `Splash`: The Inco AI inference runtime for supported Apple Silicon Macs.
+- `target`: The conversation that the procedure deletes.
+- `terminal`: A program that displays a shell on the screen.
+- `timestamp`: A date and time attached to a log line.
 - `unified memory`: The memory that the CPU and GPU share on an Apple Silicon Mac.
 
 
