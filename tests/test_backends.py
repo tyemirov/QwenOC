@@ -26,7 +26,7 @@ with log_path.open('a') as log_file:
 
 if command == 'opencode':
     if arguments == ['--version']:
-        print('1.18.17')
+        print(os.environ.get('TEST_OPENCODE_VERSION', 'opencode v2.2.5'))
         sys.exit(0)
     config = json.loads(os.environ['OPENCODE_CONFIG_CONTENT'])
     record = {
@@ -40,7 +40,14 @@ if command == 'opencode':
     if arguments[:2] == ['debug', 'config']:
         # The external OpenCode process is a controlled boundary in these tests.
         # This does not qualify the live provider or OpenCode's config loader.
-        print(json.dumps(config))
+        def selection(value):
+            provider, model = value.split('/', 1)
+            model, separator, variant = model.partition('#')
+            return {'providerID': provider, 'model': model, **({'variant': variant} if separator else {})}
+        config['model'] = selection(config['model'])
+        for agent in config['agents'].values():
+            agent['model'] = selection(agent['model'])
+        print(json.dumps([{'type': 'document', 'info': config}]))
     elif arguments[:2] == ['mcp', 'list']:
         print('context7 connected\ngh_grep connected')
     elif arguments[:1] == ['run']:
@@ -200,7 +207,7 @@ class BackendLaunchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         record = self.record()
         self.assertEqual(record["config"]["model"], LOCAL_MODEL)
-        self.assertEqual(record["config"]["agent"]["qwen-local"]["variant"], "medium")
+        self.assertEqual(record["config"]["agents"]["qwen-local"]["model"], LOCAL_MODEL + "#medium")
         self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
         operations = [entry["arguments"][0] for entry in self.calls_for("lms")]
         self.assertIn("load", operations)
@@ -212,6 +219,23 @@ class BackendLaunchTests(unittest.TestCase):
         result = self.invoke("--backend", "local", str(self.target))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.record()["config"]["model"], LOCAL_MODEL)
+
+    def test_current_opencode_version_launches(self) -> None:
+        self.environment["TEST_LOCAL_ALLOWED"] = "1"
+        self.environment["TEST_OPENCODE_VERSION"] = "opencode v2.2.5"
+        result = self.invoke(str(self.target))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record()["cwd"], str(self.target.resolve()))
+
+    def test_outdated_or_invalid_opencode_stops_before_model_load(self) -> None:
+        self.environment["TEST_LOCAL_ALLOWED"] = "1"
+        for version in ["opencode v2.2.4", "1.18.17", "", "unknown"]:
+            with self.subTest(version=version):
+                self.environment["TEST_OPENCODE_VERSION"] = version
+                result = self.invoke(str(self.target))
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertFalse(self.record_path.exists())
+                self.assertEqual(self.calls_for("lms"), [])
 
     def test_bad_backend_is_rejected_without_local_probe(self) -> None:
         result = self.invoke("--backend", "invalid", str(self.target))
