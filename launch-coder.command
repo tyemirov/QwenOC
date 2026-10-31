@@ -118,13 +118,16 @@ if ! acquire_session_lock; then
   exit 7
 fi
 STARTED_SERVER=0
+MODEL_ACQUIRED=0
 cleanup() {
   release_session_lock
   local active_sessions
   active_sessions="$(active_opencode_session_pids || true)"
   if [[ -z "$active_sessions" ]]; then
-    printf '\nSession finished. Unloading model to free system memory...\n' >&2
-    "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    if [[ "$MODEL_ACQUIRED" -eq 1 ]]; then
+      printf '\nSession finished. Unloading model to free system memory...\n' >&2
+      "$LMS_BIN" unload "$MODEL_ID" >/dev/null 2>&1 || true
+    fi
     if [[ "$STARTED_SERVER" -eq 1 ]]; then
       printf 'Stopping LM Studio server...\n' >&2
       "$LMS_BIN" server stop >/dev/null 2>&1 || true
@@ -190,6 +193,7 @@ if [[ -z "$CURRENT_CONTEXT" ]]; then
     --speculative-draft-mtp \
     --yes
 fi
+MODEL_ACQUIRED=1
 
 MODEL_READY=0
 for _attempt in {1..30}; do
