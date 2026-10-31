@@ -1,7 +1,7 @@
 ---
 description: Structure, audit, and formula-validate a Google Sheet
 agent: qwen-bureaucrat
-subtask: false
+subagent: false
 ---
 
 Inspect the active Google Sheet or tabular dataset specified by the user. 
