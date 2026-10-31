@@ -466,7 +466,9 @@ active_opencode_session_pids() {
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
     command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    if [[ "$command" == *"--model lmstudio/qwen3.8-27b"* || "$command" == *"--model splash/$SPLASH_MODEL_ID"* ]]; then
+    if [[ " $command " == *" --standalone "* || \
+      " $command " == *" --model $OPENCODE_MODEL "* || \
+      " $command " == *" --model $OPENCODE_MODEL#"* ]]; then
       printf '%s\n' "$pid"
     fi
   done < <(pgrep -x opencode 2>/dev/null || true)
