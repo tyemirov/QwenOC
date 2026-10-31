@@ -96,10 +96,16 @@ The result is a practical range: quality-oriented Q8 local inference where memor
 - macOS 26.6.2
 - LM Studio 0.4.21+2
 - LM Studio llama.cpp runtime 2.28.2
-- OpenCode 1.18.17
+- OpenCode 2.2.5 for the current configuration and CLI integration tests
 - Qwen 3.8 27B GGUF Q8_0, approximately 30 GB on disk
 - 131,072-token context, full GPU offload, Flash Attention, one prediction slot and one OpenCode session
 - Bundled MTP speculative decoding with a measured 92.24% aggregate draft-token acceptance rate
+
+The recorded inference measurements used OpenCode 1.18.17.
+The current configuration uses OpenCode 2.2.5 and its native v2 schema.
+CLI integration tests use the installed OpenCode client and a local HTTP server.
+These tests cover both roles, each memory tier, and the request settings.
+They do not measure inference speed.
 
 This repository contains configuration and scripts. The installer downloads the model directly through LM Studio.
 
@@ -126,7 +132,7 @@ cd QwenOC
 The installer is idempotent. It:
 
 1. Verifies Apple Silicon and maps physical memory to the highest supported tier.
-2. Installs LM Studio, OpenCode, and `jq` through Homebrew when needed.
+2. Installs LM Studio, OpenCode through `anomalyco/tap/opencode-v2`, and `jq` when necessary.
 3. Confirms that LM Studio supports `--speculative-draft-mtp`.
 4. Downloads the exact mapped GGUF variant when needed: Q8_0, Q6_K, or Q4_K_M.
 5. Starts the LM Studio API server.
@@ -302,10 +308,11 @@ The launcher also exposes the same check:
 - Press `Ctrl+T` in OpenCode to cycle the `low`, `medium`, and `xhigh` reasoning variants. `medium` is the default.
 - Run `/finish` to continue an implementation until its acceptance criteria and verification are complete.
 - Run `/verify` for a final repository diff and test audit.
-- Automatic compaction is enabled with pruning and a tier-specific 32,000, 16,384, or 8,192-token reserve.
+- Automatic compaction uses `compaction.buffer` with a 32,000, 16,384, or 8,192-token allowance for the selected tier.
 - The provider uses one 30-minute request deadline. It does not impose a shorter between-chunk SSE deadline while LM Studio is processing a long prompt.
 
-The local plugin applies the model's generation defaults and adds task state, verification evidence, unresolved failures, and the next action to OpenCode's compaction context.
+The model request body sets the generation defaults.
+The source code in `plugins/coder/` adds task state, verification results, unresolved failures, and the next action to the compaction context.
 
 ## Runtime hygiene
 
@@ -317,7 +324,10 @@ Claude-compatible skill discovery is disabled for this profile so that skills al
 
 ## Configuration boundaries
 
-OpenCode merges custom, global, and target-project configuration. The launcher passes the model and agent explicitly, while the doctor verifies that the final resolved configuration still preserves this profile's critical settings. A managed organization configuration can retain higher precedence.
+OpenCode merges custom, global, and target-project configuration.
+Each launcher uses `--standalone` with the selected model and agent in `OPENCODE_CONFIG_CONTENT`.
+The doctor reads the v2 configuration sources and verifies the model, agent, compaction allowance, and MCP settings.
+A managed organization configuration can retain higher precedence.
 
 The model API listens on `127.0.0.1:1234`. OpenCode session sharing is disabled. Context7 and `gh_grep` make outbound network requests when used.
 
@@ -336,8 +346,10 @@ configs/bureaucrat.jsonc         Dedicated OpenCode configuration for The Bureau
 opencode.jsonc                  Base OpenCode settings
 prompts/qwen-local.txt          Qwen-specific coding-agent system prompt
 prompts/qwen-bureaucrat.txt     Qwen-specific office and administrative system prompt
-.opencode-coder/                Coder-isolated plugins, commands, and skills
-.opencode-bureaucrat/           Bureaucrat-isolated plugins, commands, and skills
+.opencode-coder/                Coder commands and skills
+.opencode-bureaucrat/           Bureaucrat commands and skills
+plugins/coder/                  Native v2 Coder source code
+plugins/bureaucrat/             Native v2 Bureaucrat source code
 ```
 
 ## Licensing and attribution
