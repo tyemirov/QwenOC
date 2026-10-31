@@ -1,16 +1,7 @@
 import type { Plugin } from "@opencode/plugin"
+import { sanitizeGrammarSchema } from "../../scripts/grammar-schema.mjs"
 
 type SchemaValue = null | boolean | number | string | SchemaValue[] | { [key: string]: SchemaValue }
-
-function sanitizeGrammarSchema(schema: SchemaValue): SchemaValue {
-  if (schema === null || typeof schema !== "object") return schema
-  if (Array.isArray(schema)) return schema.map(sanitizeGrammarSchema)
-  return Object.fromEntries(
-    Object.entries(schema)
-      .filter(([key]) => !["pattern", "$schema", "additionalProperties"].includes(key))
-      .map(([key, value]) => [key, sanitizeGrammarSchema(value)]),
-  )
-}
 
 export default {
   id: "qwenoc.bureaucrat",
