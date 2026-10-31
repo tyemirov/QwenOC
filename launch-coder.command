@@ -93,11 +93,7 @@ if ! command -v jq >/dev/null 2>&1; then
   printf 'jq is required to prepare the OpenCode configuration.\n' >&2
   exit 3
 fi
-OPENCODE_VERSION="$("$OPENCODE_BIN" --version 2>/dev/null | tail -1)"
-if ! version_at_least "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
-  printf 'OpenCode %s or newer is required; detected %s.\n' "$MIN_OPENCODE_VERSION" "$OPENCODE_VERSION" >&2
-  exit 3
-fi
+require_opencode_version
 
 if [[ "$INFERENCE_BACKEND" == "splash" ]]; then
   launch_splash_opencode coder "$PROJECT_DIR" "$@"
@@ -215,7 +211,5 @@ configure_opencode_environment "coder"
 printf 'Launching [Qwen The Coder] in %s with %s (%s GiB detected).\n' \
   "$PROJECT_DIR" "$MODEL_QUANTIZATION" "$DETECTED_MEMORY_GIB"
 cd "$PROJECT_DIR"
-"$OPENCODE_BIN" "$PROJECT_DIR" \
-  --model "$OPENCODE_MODEL" \
-  --agent "qwen-local" \
+"$OPENCODE_BIN" --standalone "$PROJECT_DIR" \
   "$@"
