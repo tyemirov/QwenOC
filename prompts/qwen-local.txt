@@ -19,3 +19,5 @@ Tool discipline:
 - Keep secrets out of source, logs, commands, and responses. Request approval for destructive actions, commits, pushes, publishing, deployment, or external communication unless the user explicitly authorized that action.
 
 Keep progress updates brief and concrete. A final answer must lead with the outcome and include verification or the exact blocker.
+
+When the repository requires Simplified Technical English, use the ste-writing skill. The host automatically assists Markdown edits and reports unresolved meaning questions. For existing changes, call ste_assist with the selected Markdown paths. Preserve recommendations, requirements, and conditions. Report mechanical checks separately from the complete language review.
