@@ -32,8 +32,12 @@ class SamplingHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/event-stream')
         self.end_headers()
         text = 'SAMPLING_OK'
-        if not body.get('tools') and 'You MUST use this format for your response' in json.dumps(body['messages']):
-            text = '## Objective\n- Reply SAMPLING_OK.\n\n## Work State\n### Completed\n- First reply.\n\n## Next Move\n1. Continue.\n'
+        if 'You MUST use this format for your response' in json.dumps(body['messages']):
+            text = ('## Objective\n- Reply SAMPLING_OK.\n\n## Requirements\n- Do not use tools.\n\n'
+                    '## Decisions\n- (none)\n\n## Work State\n### Completed\n- First reply.\n\n'
+                    '### Active\n- Continue the reply.\n\n### Blocked\n- (none)\n\n'
+                    '## Next Move\n1. Reply SAMPLING_OK.\n\n## Relevant Files\n- (none)\n\n'
+                    '## Important Context\n- (none)\n')
         for delta, finish in [({'role': 'assistant', 'content': text}, None),
                               ({}, 'stop')]:
             payload = {'id': 'chatcmpl-test', 'object': 'chat.completion.chunk',
@@ -80,7 +84,7 @@ def test_sampling_through_opencode(role: str, backend: str, memory: int,
         # Inject only external transports. Keep the real config, plugin, and client.
         config['providers'][provider]['settings']['baseURL'] = f'http://127.0.0.1:{server.server_port}/v1'
         config['mcp']['servers'] = {key: {**value, 'disabled': True} for key, value in config['mcp']['servers'].items()}
-        environment.update(HOME=str(tmp_path), XDG_DATA_HOME=str(tmp_path / 'data'),
+        environment.update(PWD=str(tmp_path), HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / 'config'), XDG_DATA_HOME=str(tmp_path / 'data'),
                            XDG_STATE_HOME=str(tmp_path / 'state'), XDG_CACHE_HOME=str(tmp_path / 'cache'),
                            OPENCODE_CONFIG=str(ROOT / f'configs/{role}.jsonc'),
                            OPENCODE_CONFIG_DIR=str(ROOT / f'.opencode-{role}'),
@@ -113,6 +117,12 @@ def test_sampling_through_opencode(role: str, backend: str, memory: int,
             [opencode, 'run', '--standalone', *options, '--format', 'json',
              'Reply SAMPLING_OK. Do not use tools.'],
             cwd=tmp_path, env=environment, text=True, capture_output=True, timeout=45)
+        if role == 'bureaucrat' and backend == 'local' and effort in {'medium', 'xhigh'}:
+            assert result.returncode != 0
+            errors = [json.loads(line)['error'] for line in result.stdout.splitlines() if json.loads(line).get('type') == 'error']
+            assert any(error.get('type') == 'provider.no-route' and effort in error.get('message', '') for error in errors), result.stdout + result.stderr
+            assert not any(request.get('tools') for request in server.requests)
+            return
         assert result.returncode == 0, result.stdout + result.stderr
         assert server.requests, result.stdout
         expected_top_k = 40 if backend == 'local' and role == 'bureaucrat' else 20
