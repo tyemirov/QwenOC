@@ -18,7 +18,8 @@ Use Part 1 for writing rules and Part 2 for the controlled dictionary.
 If retrieval or verification fails, stop prose edits and report the source blocker.
 Read-only analysis can continue.
 Use only the verified official reference.
-Keep the PDF and its dictionary outside generated files, commits, and redistributed artifacts.
+Keep the PDF and its dictionary outside product files, commits, and redistributed artifacts.
+Keep extracted reference text in the local reference cache only.
 
 The producing agent owns the rule and dictionary review.
 Do not assign retrieval, review, or compliance decisions to the end user.
@@ -49,6 +50,7 @@ Do not assign retrieval, review, or compliance decisions to the end user.
 - Use an `-ing` form only in an approved word or technical noun.
 - Use direct verbs and approved phrasal verbs.
 - Keep a multi-word noun to three words or fewer.
+- For a necessary longer technical noun, apply Rule 2.2 and define its shorter form.
 - Use necessary articles.
 - Use `must` for requirements and `can` for capability.
 - Separate preferred methods from binding requirements.
@@ -76,7 +78,7 @@ Use the simple past tense for changelog entries.
 1. Identify the changed prose and classify each section as procedural or descriptive.
 2. Verify the facts and preserve the source meaning.
 3. Apply the terminology and writing rules.
-4. Run `check-ste` on each changed document.
+4. Run the shared review command on the changed prose.
 5. Correct mechanical findings in the changed text.
 6. Review all changed prose against applicable Part 1 rules.
 7. Review each general word against Part 2 for its meaning and part of speech.
@@ -86,3 +88,63 @@ The checker finds selected mechanical errors only.
 It does not certify dictionary usage, factual accuracy, or complete ASD-STE100 compliance.
 Claim full-document compliance only after you review the complete document against both parts.
 For a partial revision, distinguish reviewed changes from unchanged text.
+
+## Shared Review Command
+
+Resolve `MPRLAB_GOVERNOR_SKILL` from the installed Governor skill location.
+Use `uv` to run the command with its declared dependencies.
+
+```bash
+uv run --script "$MPRLAB_GOVERNOR_SKILL/scripts/ste.py" review --repo . --changed --json
+uv run --script "$MPRLAB_GOVERNOR_SKILL/scripts/ste.py" review README.md --section-mode 'Context=description' --json
+uv run --script "$MPRLAB_GOVERNOR_SKILL/scripts/ste.py" lookup should --json
+uv run --script "$MPRLAB_GOVERNOR_SKILL/scripts/ste.py" lookup 6.6 --kind rule --json
+```
+
+The review command verifies the reference, loads repository terminology, and reports mechanical findings.
+It also gives dictionary page references and the words that require a meaning review.
+The `--changed` option includes staged edits, unstaged edits, and new Markdown files.
+It examines complete prose blocks that intersect changed lines relative to `HEAD`.
+
+Use `--base REVISION` for another comparison revision.
+Temporary execution plans stay outside this selection.
+Use explicit document paths for a complete document review.
+
+Use `--section-mode 'HEADING=procedure'` or `--section-mode 'HEADING=description'` to classify a section and its subsections.
+Without a section mode, mixed mode treats list items as instructions.
+Read each reported text unit to confirm its classification.
+
+The command returns `0` when the mechanical checks pass.
+It returns `1` for findings and `2` for an input or reference error.
+The `no_changed_prose` status means that no changed prose requires examination.
+It does not mean that a document passed a language review.
+An explicit path without prose returns `2`.
+
+Use `check-ste` for a mechanical document check without reference preparation.
+It supports the same section modes.
+
+Preserve recommendations, requirements, conditions, exceptions, and technical facts during correction.
+Dictionary suggestions require a meaning review.
+Replace `should` with `must` only when the source already states a requirement.
+For a condition such as `Should a failure occur`, use an `if` construction.
+The review and lookup commands inspect source without changes.
+The assist command can apply accepted corrections through an authorized host.
+
+## Assisted Correction
+
+In QwenOC Coder, the host runs assistance after Markdown edits when the repository policy requires STE.
+It prepares the verified reference before the edit.
+For existing edits, use the native `ste_assist` tool with selected Markdown paths.
+
+The host gives the selected model one prose block and its relevant reference context.
+The command protects literals and compares numbers, negation, conditions, and obligation terms.
+It checks each response and stops repeated findings or exhausted attempts.
+It rejects empty output and output without a completion marker.
+
+The host applies accepted corrections to the selected files.
+It returns a proposal for meaning review when protected content or tracked meaning markers change.
+Read each unresolved proposal against its source before correction.
+Review the remaining dictionary and writing rules after a mechanical pass.
+The command does not establish complete meaning preservation or STE compliance.
+
+For another host, use the `ste-writing` adapter protocol to drive `ste.py assist` through a private JSON-lines channel.
