@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a problem with the installation, a launcher, or an agent
+title: "[Bug] "
+body:
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model and unified memory
+      description: For example, M4 Max, 64 GiB
+      placeholder: M4 Max, 64 GiB
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: macOS release
+    validations:
+      required: true
+  - type: input
+    id: lmstudio
+    attributes:
+      label: LM Studio release
+    validations:
+      required: true
+  - type: input
+    id: opencode
+    attributes:
+      label: OpenCode release
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: Result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Necessary result
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps that show the problem
+      description: Give the commands in the order that you did them
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove credentials, OAuth tokens, and account data before you paste log lines
+    validations:
+      required: false

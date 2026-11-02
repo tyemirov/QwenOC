@@ -103,29 +103,74 @@ Give each term one meaning. Use the same term for the same concept in all docume
 
 Add repository-specific technical nouns below this line.
 
+- `account`: The name and data that identify a person on an external system, such as Google.
+- `agreement`: A contract that gives a person the right to use the code for commercial work.
+- `authorization`: The check that shows a person can do an operation.
+- `backend`: The program that serves model inference to the agent.
+- `benchmark`: A measured value that compares model speed or quality.
 - `command`: An instruction that a shell executes.
+- `coding`: The work of writing and changing source code.
+- `commercial`: A use of the code that the PolyForm Noncommercial License 1.0.0 does not give.
+- `compaction`: The automatic reduction of conversation content to fit the context budget.
+- `context`: The conversation content and system instructions that the model receives.
+- `contribution`: An original work that a person submits for inclusion in the repository.
+- `contributor`: A person who submits a contribution.
 - `conversation`: One OpenCode session and its saved content.
 - `deleting session`: The session that runs the procedure.
 - `DFlash 2`: The draft model system that Splash uses for speculative decoding.
+- `diagnostics`: The checks and reports that show the state of the installation.
+- `draft`: A first copy of an email or record that a person can change.
+- `email`: What a person sends to a person over the internet.
 - `fragment`: One part of a divided value.
+- `generation`: The output that a model makes from input.
+- `GGUF`: The file format that stores quantized model weights.
+- `grant`: The right that Google gives an account for a set of scopes.
+- `GPU offload`: The use of the GPU for model inference.
 - `history`: A file that stores the commands a person enters in a terminal.
+- `inference`: The process that a model uses to create output from input.
+- `internet`: The public network that connects external services.
+- `launcher`: A command that starts one configured agent.
+- `license`: The legal terms that govern use of the repository.
 - `line`: One unit of content in a file that ends at a line break.
 - `log`: A file that a program writes to as it works.
+- `marker`: The data that shows that Chrome remote debugging is on.
+- `MCP`: The Model Context Protocol that connects the agent to external tools.
+- `measurement`: One recorded value from a benchmark.
 - `model`: A program that creates content from input.
 - `model package`: The weights, tokenizer, and metadata that an inference runtime loads.
+- `MTP`: Multi-Token Prediction, the Qwen feature that predicts multiple tokens per step.
+- `MTP head`: The model component that produces the MTP predictions.
+- `network`: A group of systems that give data to each other.
+- `offline`: A state with no internet connection.
+- `OAuth token`: A credential that an MCP server uses for Google authorization.
+- `privacy`: The protection of personal data from unauthorized access.
+- `project`: The set of work that a person does in one location.
+- `profile`: A named set of agent configuration values.
+- `provider`: The service or source that supplies a model.
 - `quantization`: The numerical representation of model weights at a specified precision.
 - `reasoning effort`: The model setting that controls the extent of reasoning before an answer.
+- `request`: A call that a client sends to a server.
+- `scope`: The set of operations that an authorization gives.
+- `security`: The protection of the system and its data from harm.
 - `session`: One conversation in the OpenCode database.
 - `session ID`: A code that identifies one session.
 - `server`: A running LM Studio process that handles model requests.
 - `server log`: The LM Studio file that stores model request content.
 - `shell`: A program that executes commands.
+- `skill`: A set of steps that the agent loads to do a type of work.
 - `snapshot`: A saved copy of file content at a point in time.
+- `speculative decoding`: The inference method that uses a draft model to speed up generation.
 - `Splash`: The Inco AI inference runtime for supported Apple Silicon Macs.
+- `system prompt`: The fixed instructions that the agent gives the model at the start of a conversation.
 - `target`: The conversation that the procedure deletes.
 - `terminal`: A program that displays a shell on the screen.
+- `tier`: A memory-based configuration level that selects a quantization.
 - `timestamp`: A date and time attached to a log line.
+- `token`: The smallest unit of text that a model processes.
+- `token-weighted rate`: The generation rate with the output token count as the weight for each measurement.
 - `unified memory`: The memory that the CPU and GPU share on an Apple Silicon Mac.
+- `vulnerability`: A weakness that a threat can exploit.
+- `weights`: The numerical values that a model uses to produce output.
 
 
 ```text
