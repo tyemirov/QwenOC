@@ -1,6 +1,8 @@
-.PHONY: ci lint test
+.PHONY: ci lint test docs
 
-ci: lint test
+MPRLAB_GOVERNOR_SKILL ?= $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME),$(HOME)/.config)/opencode/skills/mprlab-governor
+
+ci: lint test docs
 
 lint:
 	@for script in *.command scripts/*.sh; do bash -n "$$script" || exit; done
@@ -8,3 +10,6 @@ lint:
 
 test:
 	uv run --with pytest python -m pytest tests -q
+
+docs:
+	uv run --script "$(MPRLAB_GOVERNOR_SKILL)/scripts/ste.py" review --repo "$(CURDIR)" --changed
