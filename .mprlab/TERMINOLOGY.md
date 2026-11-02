@@ -91,6 +91,14 @@ Give each term one meaning. Use the same term for the same concept in all docume
 - `worktree`: A Git checkout that has its own working directory.
 - `website hostname`: The hostname that identifies a public static website.
 
+- `prose block`: A complete paragraph, heading, list item, or table cell that the language command examines.
+- `section mode`: The procedural or descriptive classification assigned to a document section.
+
+- `correction request`: One prose block, its language findings, and relevant reference context sent to a model.
+- `correction round`: One model response and the language checks that examine it.
+- `protected literal`: Source text whose exact content the correction command retains.
+- `meaning marker`: A number, negative term, condition, or obligation term that the correction command compares.
+
 ## Repository Technical Nouns
 
 Add repository-specific technical nouns below this line.

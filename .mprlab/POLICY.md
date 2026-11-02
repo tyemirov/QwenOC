@@ -137,7 +137,8 @@ Apply this gate when the selected task requires credentials.
 - Apply this rule to PRDs, architecture documents, issues, plans, policies, ADRs, READMEs, runbooks, and API documents.
 - Do not change technical meaning to make the language simpler.
 - Run the skill `prepare-ste-reference` script to retrieve and verify the official Issue 9 PDF.
-- Run the skill `check-ste` script on each technical document that you change.
+- Run the shared `ste.py review` command on changed technical prose.
+- Use its dictionary references and findings for the producing agent review.
 - The producing agent must review Part 1 writing rules and the Part 2 dictionary.
 - Do not assign the reference retrieval or language review to the end user.
 - If the official reference is not available, report a blocker and do not claim compliance.

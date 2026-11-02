@@ -314,6 +314,31 @@ The launcher also exposes the same check:
 The model request body sets the generation defaults.
 The source code in `plugins/coder/` adds task state, verification results, unresolved failures, and the next action to the compaction context.
 
+## Simplified Technical English
+
+Use `/ste` to correct selected changed Markdown files through the native `ste_assist` tool.
+Install both `ste-writing` and `mprlab-governor` through the Smith skill installer.
+
+The Coder host prepares the reference before Markdown edits when the repository policy requires STE.
+After each edit, it runs bounded correction attempts with the selected model.
+Each request contains one prose block, specific findings, and relevant reference excerpts.
+The host preserves protected literals and returns meaning changes as unapplied proposals.
+Review these proposals against their source before correction.
+
+The shared review and lookup commands inspect source without edits.
+The assist command can apply accepted corrections.
+A mechanical pass leaves the remaining language review to the producing agent.
+
+```bash
+make docs
+make docs MPRLAB_GOVERNOR_SKILL=/path/to/mprlab-governor
+```
+
+The default skill path is under the global OpenCode configuration directory.
+The `docs` target examines changed prose relative to `HEAD`, including new Markdown files.
+The `ci` target includes this check.
+For a complete document review, use the shared command with explicit file paths.
+
 ## Runtime hygiene
 
 Every hardware tier deliberately runs one OpenCode session against one LM Studio prediction slot. The launcher uses a single-session lock and reports the PID of an existing session instead of creating a competing queue.
