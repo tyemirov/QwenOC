@@ -1,0 +1,23 @@
+name: Feature request
+description: A change or a new feature
+title: "[Feature] "
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want to change
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What will the change do
+    validations:
+      required: true
+  - type: textarea
+    id: alternative
+    attributes:
+      label: An alternative
+      description: Give one more way to get the same result, if you have one
+    validations:
+      required: false
