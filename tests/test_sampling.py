@@ -167,6 +167,7 @@ def test_sampling_through_opencode(role: str, backend: str, memory: int,
                  'Continue. Reply SAMPLING_OK. Do not use tools.'],
                 cwd=tmp_path, env=environment, text=True, capture_output=True, timeout=45)
             assert continued.returncode == 0, continued.stdout + continued.stderr
+            assert 'SAMPLING_OK' in continued.stdout, continued.stdout
             expected = ("Preserve the user's current acceptance criteria" if role == 'coder' else
                         'Preserve all pending email drafts')
             assert any(expected in json.dumps(request['messages']) for request in server.requests), continued.stdout
